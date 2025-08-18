@@ -2,6 +2,7 @@ using System;
 using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
+using Linear_Programming_Solver.Models;
 
 namespace Linear_Programming_Solver
 {
@@ -10,6 +11,7 @@ namespace Linear_Programming_Solver
         private Label titleLabel;
         private Button importButton;
         private Button exportButton;
+        private Button solveButton;
         private TextBox lpInputTextBox;
         private TextBox iterationOutputTextBox;
         private ComboBox algorithmDropdown;
@@ -87,6 +89,33 @@ namespace Linear_Programming_Solver
             iterationOutputTextBox.Location = new Point((this.ClientSize.Width / 2) - 300, 320);
             iterationOutputTextBox.PlaceholderText = "Iterations of Tableau will appear here...";
             this.Controls.Add(iterationOutputTextBox);
+
+            // Solve Button
+            solveButton = new Button();
+            solveButton.Text = "Solve LP";
+            solveButton.Size = new Size(115, 55);
+            solveButton.Location = new Point((this.ClientSize.Width / 2) - 60, 600);
+            solveButton.TextAlign = ContentAlignment.MiddleCenter;
+            solveButton.Click += btnSolve_Click;
+            this.Controls.Add(solveButton);
+        }
+
+        private void btnSolve_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                var lpText = lpInputTextBox.Text;
+                var problem = LPParser.ParseFromText(lpText); // Make sure LPParser is implemented
+
+                var solver = new LPSolver();
+                var result = solver.Solve(problem);
+
+                iterationOutputTextBox.Text = result.Report + "\n\nSummary:\n" + result.Summary;
+            }
+            catch (Exception ex)
+            {
+                iterationOutputTextBox.Text = "Error: " + ex.Message;
+            }
         }
 
         private void BtnUpload_Click(object sender, EventArgs e)

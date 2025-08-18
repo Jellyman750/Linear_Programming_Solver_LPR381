@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace Linear_Programming_Solver.Models
 {
-    internal class LPProblem
+    internal class LP_Problem
     {
     }
 }
