@@ -48,13 +48,15 @@ namespace Linear_Programming_Solver.Models
         private const int MaxIterations = 10000;
         private const double Eps = 1e-9;
 
-        public SimplexResult Solve(LPProblem original)
+        public SimplexResult Solve(LPProblem original, Action<string, bool[,]> updatePivot = null)
         {
             var model = original.Clone();
 
+            // Convert minimization to maximization
             if (model.ObjectiveSense == Sense.Min)
                 for (int i = 0; i < model.C.Length; i++) model.C[i] = -model.C[i];
 
+            // Normalize constraints
             foreach (var cons in model.Constraints)
             {
                 if (cons.Relation == Rel.GE)
@@ -63,7 +65,7 @@ namespace Linear_Programming_Solver.Models
                     cons.B *= -1;
                     cons.Relation = Rel.LE;
                 }
-                if (cons.B < -Eps)
+                if (cons.B < -1e-9)
                 {
                     for (int j = 0; j < cons.A.Length; j++) cons.A[j] *= -1;
                     cons.B *= -1;
@@ -74,16 +76,22 @@ namespace Linear_Programming_Solver.Models
             var report = new StringBuilder();
             AppendCanonicalForm(report, tableauModel);
 
+            // Build initial tableau
             var tableau = BuildTableau(tableauModel, out var basis, out var varNames);
 
-            int iter = 0;
+            // Show original tableau BEFORE first iteration
+            var sbIteration = new StringBuilder();
+            AppendTableau(sbIteration, tableau, basis, varNames, 0);
+            updatePivot?.Invoke(sbIteration.ToString(), null);
+
+            int iter = 1;
             while (true)
             {
-                if (iter++ > MaxIterations)
+                if (iter > 10000)
                     throw new Exception("Iteration limit exceeded.");
 
                 int entering = ChooseEntering(tableau);
-                if (entering == -1) break; // optimal
+                if (entering == -1) break; // optimal reached
 
                 int leaving = ChooseLeaving(tableau, entering);
                 if (leaving == -1)
@@ -92,13 +100,51 @@ namespace Linear_Programming_Solver.Models
                     return FinalizeReport(report, tableau, basis, varNames, "UNBOUNDED");
                 }
 
+                // Perform pivot
                 Pivot(tableau, leaving, entering);
                 basis[leaving] = entering;
-                AppendTableau(report, tableau, basis, varNames, iter);
+
+                // Build string for this tableau
+                sbIteration = new StringBuilder();
+                AppendTableau(sbIteration, tableau, basis, varNames, iter);
+
+                // Create highlight array for pivot row and column
+                bool[,] highlight = new bool[tableau.GetLength(0), tableau.GetLength(1)];
+                for (int j = 0; j < tableau.GetLength(1); j++) highlight[leaving, j] = true;   // pivot row (includes RHS)
+                for (int i = 0; i < tableau.GetLength(0); i++) highlight[i, entering] = true;  // pivot column (excludes RHS since entering != RHS)
+
+                // Send to callback
+                updatePivot?.Invoke(sbIteration.ToString(), highlight);
+
+                iter++;
             }
 
             return FinalizeReport(report, tableau, basis, varNames, "OPTIMAL");
         }
+
+
+        private static SimplexResult FinalizeReport(StringBuilder sb, double[,] T, int[] basis, string[] varNames, string status)
+        {
+            int m = T.GetLength(0) - 1;
+            int n = varNames.Count(v => v.StartsWith("x"));
+            var x = new double[n];
+            for (int i = 0; i < m; i++)
+                if (basis[i] < n) x[basis[i]] = T[i, T.GetLength(1) - 1];
+
+            double z = T[m, T.GetLength(1) - 1];
+            sb.AppendLine($"\nStatus: {status}");
+            for (int j = 0; j < n; j++) sb.AppendLine($"  x{j + 1} = {Math.Round(x[j], 3):0.###}");
+            sb.AppendLine($"  z* = {Math.Round(z, 3):0.###}");
+
+            var summary = new StringBuilder();
+            summary.AppendLine($"Status: {status}");
+            summary.AppendLine($"z* = {Math.Round(z, 3):0.###}");
+            summary.AppendLine("x* = [" + string.Join(", ", x.Select(v => Math.Round(v, 3))) + "]");
+
+            return new SimplexResult { Report = sb.ToString(), Summary = summary.ToString() };
+        }
+
+
 
         #region Helper Methods
 
@@ -145,15 +191,23 @@ namespace Linear_Programming_Solver.Models
 
             return T;
         }
-        
+
 
         private static int ChooseEntering(double[,] T)
         {
             int m = T.GetLength(0) - 1;
             int cols = T.GetLength(1) - 1;
+            int best = -1;
+            double minVal = -Eps;
             for (int j = 0; j < cols; j++)
-                if (T[m, j] < -Eps) return j;
-            return -1;
+            {
+                if (T[m, j] < minVal)
+                {
+                    minVal = T[m, j];
+                    best = j;
+                }
+            }
+            return best;
         }
 
         private static int ChooseLeaving(double[,] T, int entering)
@@ -209,47 +263,39 @@ namespace Linear_Programming_Solver.Models
         private static void AppendTableau(StringBuilder sb, double[,] T, int[] basis, string[] varNames, int iter)
         {
             int m = T.GetLength(0) - 1;
-            int nPlusS = T.GetLength(1) - 1;
-            sb.AppendLine($"\nTABLEAU Iteration {iter}");
-            sb.AppendLine("Basis | " + string.Join("", varNames.Select(v => v.PadLeft(8))) + " | RHS");
-            sb.AppendLine(new string('-', 10 + 9 * (nPlusS + 1)));
+            int ns = T.GetLength(1) - 1;
+            int colWidth = 12;
+
+            string PadString(string s) => s.PadLeft(colWidth);
+            string PadDouble(double d) => d.ToString("0.###").PadLeft(colWidth);
+
+            sb.AppendLine($"TABLEAU Iteration {iter}");
+
+            sb.Append(PadString("Basis"));
+            for (int j = 0; j < ns; j++) sb.Append(PadString(varNames[j]));
+            sb.Append(PadString("RHS"));
+            sb.AppendLine();
+
+            string dash = new string('-', colWidth * (ns + 2));
+            sb.AppendLine(dash);
 
             for (int i = 0; i < m; i++)
             {
-                sb.Append(varNames[basis[i]].PadLeft(5) + " | ");
-                for (int j = 0; j < nPlusS; j++) sb.Append(Math.Round(T[i, j], 3).ToString("0.###").PadLeft(8));
-                sb.Append(" | ").Append(Math.Round(T[i, nPlusS], 3).ToString("0.###")).AppendLine();
+                sb.Append(PadString(varNames[basis[i]]));
+                for (int j = 0; j < ns; j++) sb.Append(PadDouble(T[i, j]));
+                sb.Append(PadDouble(T[i, ns]));
+                sb.AppendLine();
             }
 
-            sb.Append("   z  | ");
-            for (int j = 0; j < nPlusS; j++) sb.Append(Math.Round(T[m, j], 3).ToString("0.###").PadLeft(8));
-            sb.Append(" | ").Append(Math.Round(T[m, nPlusS], 3).ToString("0.###")).AppendLine();
-        }
-
-        private static SimplexResult FinalizeReport(StringBuilder sb, double[,] T, int[] basis, string[] varNames, string status)
-        {
-            int m = T.GetLength(0) - 1;
-            int n = varNames.Count(v => v.StartsWith("x"));
-            var x = new double[n];
-            for (int i = 0; i < m; i++)
-                if (basis[i] < n) x[basis[i]] = T[i, T.GetLength(1) - 1];
-
-            double z = T[m, T.GetLength(1) - 1];
-            sb.AppendLine($"\nStatus: {status}");
-            for (int j = 0; j < n; j++) sb.AppendLine($"  x{j + 1} = {Math.Round(x[j], 3):0.###}");
-            sb.AppendLine($"  z* = {Math.Round(z, 3):0.###}");
-
-            var summary = new StringBuilder();
-            summary.AppendLine($"Status: {status}");
-            summary.AppendLine($"z* = {Math.Round(z, 3):0.###}");
-            summary.AppendLine("x* = [" + string.Join(", ", x.Select(v => Math.Round(v, 3))) + "]");
-
-            return new SimplexResult { Report = sb.ToString(), Summary = summary.ToString() };
+            sb.Append(PadString("z"));
+            for (int j = 0; j < ns; j++) sb.Append(PadDouble(T[m, j]));
+            sb.Append(PadDouble(T[m, ns]));
+            sb.AppendLine();
         }
         #endregion
-
     }
-}
+    }
+
 
 
 
