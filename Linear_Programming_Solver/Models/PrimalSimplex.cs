@@ -169,27 +169,32 @@ namespace Linear_Programming_Solver.Models
         {
             int m = model.Constraints.Count;
             int n = model.NumVars;
-            int s = m;
+            int s = m; // slack variables
 
             var T = new double[m + 1, n + s + 1];
 
+            // Fill constraints
             for (int i = 0; i < m; i++)
             {
                 var row = model.Constraints[i];
                 for (int j = 0; j < n; j++) T[i, j] = row.A[j];
-                T[i, n + i] = 1.0;
+                T[i, n + i] = 1.0;   // slack
                 T[i, n + s] = row.B;
             }
 
+            // Objective row (z) in last row for now
             for (int j = 0; j < n; j++) T[m, j] = -model.C[j];
 
+            // Basis indexes point to slack variables initially
             basis = Enumerable.Range(n, s).ToArray();
-            varNames = new string[n + s];
-            for (int j = 0; j < n; j++) varNames[j] = $"x{j + 1}";
-            for (int j = 0; j < s; j++) varNames[n + j] = $"s{j + 1}";
 
+            // Variable names
+            varNames = new string[n + s];
+            for (int j = 0; j < n; j++) varNames[j] = $"x{j + 1}";      // decision vars
+            for (int j = 0; j < s; j++) varNames[n + j] = $"c{j + 1}";   // label constraints as c1,c2...
             return T;
         }
+
 
 
         private static int ChooseEntering(double[,] T)
@@ -261,8 +266,9 @@ namespace Linear_Programming_Solver.Models
 
         private static void AppendTableau(StringBuilder sb, double[,] T, int[] basis, string[] varNames, int iter)
         {
-            int m = T.GetLength(0) - 1;
-            int ns = T.GetLength(1) - 1;
+            int m = T.GetLength(0) - 1; // number of constraints
+            int n = varNames.Count(v => v.StartsWith("x")); // number of decision variables
+            int ns = T.GetLength(1) - 1; // total columns excluding RHS
             int colWidth = 12;
 
             string PadString(string s) => s.PadLeft(colWidth);
@@ -270,6 +276,7 @@ namespace Linear_Programming_Solver.Models
 
             sb.AppendLine($"TABLEAU Iteration {iter}");
 
+            // Column headers
             sb.Append(PadString("Basis"));
             for (int j = 0; j < ns; j++) sb.Append(PadString(varNames[j]));
             sb.Append(PadString("RHS"));
@@ -278,19 +285,23 @@ namespace Linear_Programming_Solver.Models
             string dash = new string('-', colWidth * (ns + 2));
             sb.AppendLine(dash);
 
-            for (int i = 0; i < m; i++)
-            {
-                sb.Append(PadString(varNames[basis[i]]));
-                for (int j = 0; j < ns; j++) sb.Append(PadDouble(T[i, j]));
-                sb.Append(PadDouble(T[i, ns]));
-                sb.AppendLine();
-            }
-
+            // Print z row first
             sb.Append(PadString("z"));
             for (int j = 0; j < ns; j++) sb.Append(PadDouble(T[m, j]));
             sb.Append(PadDouble(T[m, ns]));
             sb.AppendLine();
+
+            // Print constraint rows
+            for (int i = 0; i < m; i++)
+            {
+                sb.Append(PadString(varNames[basis[i]])); // shows c1, c2, x1, etc.
+                for (int j = 0; j < ns; j++) sb.Append(PadDouble(T[i, j]));
+                sb.Append(PadDouble(T[i, ns]));
+                sb.AppendLine();
+            }
         }
+
+
         #endregion
     }
 }
