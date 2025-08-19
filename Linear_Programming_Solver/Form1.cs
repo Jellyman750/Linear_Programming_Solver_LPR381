@@ -103,7 +103,7 @@ namespace Linear_Programming_Solver
             this.Controls.Add(solveButton);
         }
 
-     
+
         private void btnSolve_Click(object sender, EventArgs e)
         {
             try
@@ -111,13 +111,49 @@ namespace Linear_Programming_Solver
                 var lpText = lpInputTextBox.Text;
                 var problem = LPParser.ParseFromText(lpText); // Make sure LPParser is implemented
 
-                var solver = new LPSolver();
-                var result = solver.Solve(problem, algorithmDropdown.SelectedItem.ToString(), (text, highlight) => AppendPivotRow(text, highlight));
+                iterationOutputTextBox.Clear();
+                string selectedAlgorithm = algorithmDropdown.SelectedItem?.ToString() ?? "";
+
+                switch (selectedAlgorithm)
+                {
+                    case "Primal Simplex":
+                    case "Revised Primal Simplex":
+                    case "Cutting Plane":
+                    case "Revised Cutting Plane":
+                        {
+                            // All simplex or cutting plane algorithms use LPSolver
+                            var solver = new LPSolver();
+                            var result = solver.Solve(problem, selectedAlgorithm, (text, highlight) =>
+                                AppendPivotRow(text, highlight));
+
+                            iterationOutputTextBox.AppendText("\n\nFinal Report:\n" + result.Report);
+                            iterationOutputTextBox.AppendText("\n\nSummary:\n" + result.Summary);
+                            break;
+                        }
+
+                    case "Branch and Bound":
+                    case "Revised Branch and Bound":
+                    case "Branch and Bound Knapsack":
+                        {
+                            // Branch & Bound algorithms
+                            var bbSolver = new BranchAndBound();
+
+                            bbSolver.Solve(problem,
+                                           algorithmDropdown.SelectedItem.ToString(), // algorithm string
+                                           log =>
+                                           {
+                                               iterationOutputTextBox.AppendText(log + "\n");
+                                               iterationOutputTextBox.ScrollToCaret();
+                                           });
 
 
-                // Optionally display the final report and summary
-                iterationOutputTextBox.AppendText("\n\nFinal Report:\n" + result.Report);
-                iterationOutputTextBox.AppendText("\n\nSummary:\n" + result.Summary);
+                            break;
+                        }
+
+                    default:
+                        iterationOutputTextBox.Text = "Error: Algorithm not supported.";
+                        break;
+                }
             }
             catch (Exception ex)
             {
