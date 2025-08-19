@@ -14,10 +14,12 @@ namespace Linear_Programming_Solver.Models
         /// <returns>Solution as SimplexResult.</returns>
         public SimplexResult Solve(LPProblem problem, string algorithm, Action<string, bool[,]> updatePivot = null)
         {
-            ILPAlgorithm algo = algorithm switch
+            string algoKey = algorithm.Trim().ToLower();
+            ILPAlgorithm algo = algoKey switch
             {
-                "Primal Simplex" => new PrimalSimplex(),
-                // You can add other algorithms here later
+                "primal simplex" => new PrimalSimplex(),
+                //"revised primal simplex" => new RevisedPrimalSimplex(),
+                "branch and bound simplex" => new BranchAndBound(), // implement as ILPAlgorithm
                 _ => throw new Exception("Algorithm not supported")
             };
 

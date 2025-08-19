@@ -62,15 +62,15 @@ namespace Linear_Programming_Solver
             algorithmDropdown = new ComboBox();
             algorithmDropdown.DropDownStyle = ComboBoxStyle.DropDownList;
             algorithmDropdown.Items.AddRange(new string[]
-    {
-    "Primal Simplex",
-    "Revised Primal Simplex",
-    "Branch and Bound Simplex",
-    "Revised Branch and Bound Simplex",
-    "Cutting Plane",
-    "Revised Cutting Plane",
-    "Branch and Bound Knapsack"
-    });
+               {
+                "Primal Simplex",
+                "Revised Primal Simplex",
+                "Branch and Bound",
+                "Revised Branch and Bound",
+                "Cutting Plane",
+                "Revised Cutting Plane",
+                "Branch and Bound Knapsack"
+               });
             algorithmDropdown.Location = new Point((this.ClientSize.Width / 2) - 150, 150);
             algorithmDropdown.Width = 300;
             this.Controls.Add(algorithmDropdown);
@@ -108,10 +108,9 @@ namespace Linear_Programming_Solver
         {
             try
             {
-                var lpText = lpInputTextBox.Text;
-                var problem = LPParser.ParseFromText(lpText); // Make sure LPParser is implemented
-
                 iterationOutputTextBox.Clear();
+                var lpText = lpInputTextBox.Text;
+                var problem = LPParser.ParseFromText(lpText); // Assumes LPParser is implemented
                 string selectedAlgorithm = algorithmDropdown.SelectedItem?.ToString() ?? "";
 
                 switch (selectedAlgorithm)
@@ -121,35 +120,23 @@ namespace Linear_Programming_Solver
                     case "Cutting Plane":
                     case "Revised Cutting Plane":
                         {
-                            // All simplex or cutting plane algorithms use LPSolver
                             var solver = new LPSolver();
-                            var result = solver.Solve(problem, selectedAlgorithm, (text, highlight) =>
-                                AppendPivotRow(text, highlight));
-
+                            var result = solver.Solve(problem, selectedAlgorithm, (text, highlight) => AppendPivotRow(text, highlight));
                             iterationOutputTextBox.AppendText("\n\nFinal Report:\n" + result.Report);
                             iterationOutputTextBox.AppendText("\n\nSummary:\n" + result.Summary);
                             break;
                         }
-
                     case "Branch and Bound":
                     case "Revised Branch and Bound":
                     case "Branch and Bound Knapsack":
                         {
-                            // Branch & Bound algorithms
                             var bbSolver = new BranchAndBound();
-
-                            bbSolver.Solve(problem,
-                                           algorithmDropdown.SelectedItem.ToString(), // algorithm string
-                                           log =>
-                                           {
-                                               iterationOutputTextBox.AppendText(log + "\n");
-                                               iterationOutputTextBox.ScrollToCaret();
-                                           });
-
-
+                            bbSolver.SetRelaxationAlgorithm("Primal Simplex"); // Default to Primal Simplex for relaxations
+                            var result = bbSolver.Solve(problem, (text, highlight) => AppendPivotRow(text, highlight));
+                            iterationOutputTextBox.AppendText("\n\nFinal Report:\n" + result.Report);
+                            iterationOutputTextBox.AppendText("\n\nSummary:\n" + result.Summary);
                             break;
                         }
-
                     default:
                         iterationOutputTextBox.Text = "Error: Algorithm not supported.";
                         break;
