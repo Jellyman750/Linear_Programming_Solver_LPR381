@@ -62,15 +62,15 @@ namespace Linear_Programming_Solver
             algorithmDropdown = new ComboBox();
             algorithmDropdown.DropDownStyle = ComboBoxStyle.DropDownList;
             algorithmDropdown.Items.AddRange(new string[]
-            {
-        "Primal Simplex Algorithm",
-        "Revised Primal Simplex Algorithm",
-        "Branch and Bound Simplex Algorithm",
-        "Revised Branch and Bound Simplex Algorithm",
-        "Cutting Plane Algorithm",
-        "Revised Cutting Plane Algorithm",
-        "Branch and Bound Knapsack Algorithm"
-            });
+    {
+    "Primal Simplex",
+    "Revised Primal Simplex",
+    "Branch and Bound Simplex",
+    "Revised Branch and Bound Simplex",
+    "Cutting Plane",
+    "Revised Cutting Plane",
+    "Branch and Bound Knapsack"
+    });
             algorithmDropdown.Location = new Point((this.ClientSize.Width / 2) - 150, 150);
             algorithmDropdown.Width = 300;
             this.Controls.Add(algorithmDropdown);
@@ -112,9 +112,8 @@ namespace Linear_Programming_Solver
                 var problem = LPParser.ParseFromText(lpText); // Make sure LPParser is implemented
 
                 var solver = new LPSolver();
+                var result = solver.Solve(problem, algorithmDropdown.SelectedItem.ToString(), (text, highlight) => AppendPivotRow(text, highlight));
 
-                // Pass AppendPivotRow as the callback for pivot highlighting
-                var result = solver.Solve(problem, (text, highlight) => AppendPivotRow(text, highlight));
 
                 // Optionally display the final report and summary
                 iterationOutputTextBox.AppendText("\n\nFinal Report:\n" + result.Report);

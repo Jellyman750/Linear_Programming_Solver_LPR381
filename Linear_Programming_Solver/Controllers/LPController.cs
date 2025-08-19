@@ -9,11 +9,14 @@ namespace Linear_Programming_Solver.Controllers
 {
     public static class LPController
     {
-        public static SimplexResult SolvePrimalSimplex(LPProblem problem)
+       
+            public static SimplexResult SolvePrimalSimplex(LPProblem problem)
         {
             var solver = new LPSolver();
-            return solver.Solve(problem);
+            return solver.Solve(problem, "Primal Simplex"); // <- add the algorithm name
         }
+
     }
 }
+
 
