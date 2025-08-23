@@ -18,8 +18,9 @@ namespace Linear_Programming_Solver.Models
             ILPAlgorithm algo = algoKey switch
             {
                 "primal simplex" => new PrimalSimplex(),
-                //"revised primal simplex" => new RevisedPrimalSimplex(),
-                "branch and bound simplex" => new BranchAndBound(), // implement as ILPAlgorithm
+                "revised primal simplex" => new RevisedPrimalSimplex(),
+                "dual simplex" => new DualSimplex(),
+                "branch and bound simplex" => new BranchAndBound(),
                 _ => throw new Exception("Algorithm not supported")
             };
 

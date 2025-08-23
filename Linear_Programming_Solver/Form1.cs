@@ -65,6 +65,7 @@ namespace Linear_Programming_Solver
                {
                 "Primal Simplex",
                 "Revised Primal Simplex",
+                "Dual Simplex",
                 "Branch and Bound",
                 "Revised Branch and Bound",
                 "Cutting Plane",
@@ -117,6 +118,7 @@ namespace Linear_Programming_Solver
                 {
                     case "Primal Simplex":
                     case "Revised Primal Simplex":
+                    case "Dual Simplex":
                     case "Cutting Plane":
                     case "Revised Cutting Plane":
                         {
