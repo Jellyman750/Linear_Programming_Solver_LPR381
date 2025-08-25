@@ -6,7 +6,7 @@ namespace Linear_Programming_Solver.Models
 {
     /// <summary>
     /// Branch & Bound using the Revised Primal Simplex as the LP relaxation solver.
-    /// Implements ILPAlgorithm so it plugs into your LPSolver switch.
+    /// Supports >= and <= constraints in subproblems.
     /// </summary>
     public class BranchAndBoundRevised : ILPAlgorithm
     {
@@ -23,7 +23,6 @@ namespace Linear_Programming_Solver.Models
             BestObjective = double.NegativeInfinity;
             BestSolution = null;
 
-            // Log helper
             void Log(string msg) => updatePivot?.Invoke(msg + Environment.NewLine, null);
 
             Log("Revised Branch & Bound: starting at Root Problem.");
@@ -38,7 +37,7 @@ namespace Linear_Programming_Solver.Models
             }
             else
             {
-                sb.AppendLine($"Best z* = {BestObjective}");
+                sb.AppendLine($"Best z* = {BestObjective:0.###}");
                 sb.AppendLine("Best x* = [" + string.Join(", ", BestSolution.Select(v => v.ToString("0.###"))) + "]");
             }
 
@@ -56,7 +55,7 @@ namespace Linear_Programming_Solver.Models
             SimplexResult res;
             try
             {
-                // Use the revised primal simplex relaxation
+                // Solve LP relaxation using Revised Primal Simplex
                 res = _lpSolver.Solve(problem, "Revised Primal Simplex");
             }
             catch (Exception ex)
@@ -74,9 +73,9 @@ namespace Linear_Programming_Solver.Models
                 return;
             }
 
-            log($"{name} relaxation: z* = {z}, x* = [{string.Join(", ", x.Select(v => v.ToString("0.###")))}]");
+            log($"{name} relaxation: z* = {z:0.###}, x* = [{string.Join(", ", x.Select(v => v.ToString("0.###")))}]");
 
-            // Bounding (maximize): if z ≤ incumbent, prune
+            // Bounding (maximize): prune if relaxation is worse than current best
             if (z <= BestObjective + EPS)
             {
                 log($"{name}: pruned by bound (z* ≤ current best {BestObjective:0.###}).");
@@ -110,7 +109,7 @@ namespace Linear_Programming_Solver.Models
                 return;
             }
 
-            // Branch on a fractional variable
+            // Branch on fractional variable
             double xi = x[fracIdx];
             double floor = Math.Floor(xi);
             double ceil = Math.Ceiling(xi);
@@ -133,7 +132,6 @@ namespace Linear_Programming_Solver.Models
                 B = ceil
             });
 
-            // Names with subproblem counters
             string leftName = $"Subproblem {_subCounter++}: x{fracIdx + 1} ≤ {floor}";
             string rightName = $"Subproblem {_subCounter++}: x{fracIdx + 1} ≥ {ceil}";
 
@@ -141,7 +139,7 @@ namespace Linear_Programming_Solver.Models
             log($" → {leftName}");
             log($" → {rightName}");
 
-            // Depth-first recursion (you can swap order)
+            // Depth-first recursion
             SolveSubproblem(left, leftName, log);
             SolveSubproblem(right, rightName, log);
         }
@@ -187,4 +185,3 @@ namespace Linear_Programming_Solver.Models
         }
     }
 }
-

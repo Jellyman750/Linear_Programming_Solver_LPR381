@@ -42,7 +42,7 @@ namespace Linear_Programming_Solver.Models
         public string Summary { get; set; } = string.Empty;
     }
 
-    internal class PrimalSimplex:ILPAlgorithm
+    internal class PrimalSimplex : ILPAlgorithm
     {
         private const int MaxIterations = 10000;
         private const double Eps = 1e-9;
@@ -51,34 +51,33 @@ namespace Linear_Programming_Solver.Models
         {
             var model = original.Clone();
 
-            // Convert minimization to maximization
+            // ✅ Convert minimization to maximization
             if (model.ObjectiveSense == Sense.Min)
                 for (int i = 0; i < model.C.Length; i++) model.C[i] = -model.C[i];
 
-            // Normalize constraints
+            // ✅ Check for unsupported constraints
             foreach (var cons in model.Constraints)
             {
                 if (cons.Relation == Rel.GE)
                 {
-                    for (int j = 0; j < cons.A.Length; j++) cons.A[j] *= -1;
-                    cons.B *= -1;
-                    cons.Relation = Rel.LE;
+                    throw new Exception("Constraint contains '>=' sign. The Primal Simplex method cannot handle this. Please try the Dual Simplex algorithm instead.");
                 }
+
                 if (cons.B < -1e-9)
                 {
-                    for (int j = 0; j < cons.A.Length; j++) cons.A[j] *= -1;
-                    cons.B *= -1;
+                    throw new Exception("Constraint has a negative RHS value. The Primal Simplex method cannot handle this. Please try the Dual Simplex algorithm instead.");
                 }
             }
 
+            // ✅ Expand equalities into two inequalities
             var tableauModel = ExpandEqualitiesToInequalities(model);
             var report = new StringBuilder();
             AppendCanonicalForm(report, tableauModel);
 
-            // Build initial tableau
+            // ✅ Build initial tableau
             var tableau = BuildTableau(tableauModel, out var basis, out var varNames);
 
-            // Show original tableau BEFORE first iteration
+            // Show initial tableau
             var sbIteration = new StringBuilder();
             AppendTableau(sbIteration, tableau, basis, varNames, 0);
             updatePivot?.Invoke(sbIteration.ToString(), null);
@@ -86,7 +85,7 @@ namespace Linear_Programming_Solver.Models
             int iter = 1;
             while (true)
             {
-                if (iter > 10000)
+                if (iter > MaxIterations)
                     throw new Exception("Iteration limit exceeded.");
 
                 int entering = ChooseEntering(tableau);
@@ -107,12 +106,11 @@ namespace Linear_Programming_Solver.Models
                 sbIteration = new StringBuilder();
                 AppendTableau(sbIteration, tableau, basis, varNames, iter);
 
-                // Create highlight array for pivot row and column
+                // Highlight pivot
                 bool[,] highlight = new bool[tableau.GetLength(0), tableau.GetLength(1)];
-                for (int j = 0; j < tableau.GetLength(1); j++) highlight[leaving, j] = true;   // pivot row (includes RHS)
-                for (int i = 0; i < tableau.GetLength(0); i++) highlight[i, entering] = true;  // pivot column (excludes RHS since entering != RHS)
+                for (int j = 0; j < tableau.GetLength(1); j++) highlight[leaving, j] = true; // pivot row
+                for (int i = 0; i < tableau.GetLength(0); i++) highlight[i, entering] = true; // pivot col
 
-                // Send to callback
                 updatePivot?.Invoke(sbIteration.ToString(), highlight);
 
                 iter++;
@@ -121,7 +119,7 @@ namespace Linear_Programming_Solver.Models
             return FinalizeReport(report, tableau, basis, varNames, "OPTIMAL");
         }
 
-
+        // ---------- Helper methods (unchanged) ----------
         private static SimplexResult FinalizeReport(StringBuilder sb, double[,] T, int[] basis, string[] varNames, string status)
         {
             int m = T.GetLength(0) - 1;
@@ -142,10 +140,6 @@ namespace Linear_Programming_Solver.Models
 
             return new SimplexResult { Report = sb.ToString(), Summary = summary.ToString() };
         }
-
-
-
-        #region Helper Methods
 
         private static LPProblem ExpandEqualitiesToInequalities(LPProblem model)
         {
@@ -169,11 +163,10 @@ namespace Linear_Programming_Solver.Models
         {
             int m = model.Constraints.Count;
             int n = model.NumVars;
-            int s = m; // slack variables
+            int s = m;
 
             var T = new double[m + 1, n + s + 1];
 
-            // Fill constraints
             for (int i = 0; i < m; i++)
             {
                 var row = model.Constraints[i];
@@ -182,20 +175,15 @@ namespace Linear_Programming_Solver.Models
                 T[i, n + s] = row.B;
             }
 
-            // Objective row (z) in last row for now
             for (int j = 0; j < n; j++) T[m, j] = -model.C[j];
 
-            // Basis indexes point to slack variables initially
             basis = Enumerable.Range(n, s).ToArray();
 
-            // Variable names
             varNames = new string[n + s];
-            for (int j = 0; j < n; j++) varNames[j] = $"x{j + 1}";      // decision vars
-            for (int j = 0; j < s; j++) varNames[n + j] = $"c{j + 1}";   // label constraints as c1,c2...
+            for (int j = 0; j < n; j++) varNames[j] = $"x{j + 1}";
+            for (int j = 0; j < s; j++) varNames[n + j] = $"c{j + 1}";
             return T;
         }
-
-
 
         private static int ChooseEntering(double[,] T)
         {
@@ -266,9 +254,9 @@ namespace Linear_Programming_Solver.Models
 
         private static void AppendTableau(StringBuilder sb, double[,] T, int[] basis, string[] varNames, int iter)
         {
-            int m = T.GetLength(0) - 1; // number of constraints
-            int n = varNames.Count(v => v.StartsWith("x")); // number of decision variables
-            int ns = T.GetLength(1) - 1; // total columns excluding RHS
+            int m = T.GetLength(0) - 1;
+            int n = varNames.Count(v => v.StartsWith("x"));
+            int ns = T.GetLength(1) - 1;
             int colWidth = 12;
 
             string PadString(string s) => s.PadLeft(colWidth);
@@ -276,7 +264,6 @@ namespace Linear_Programming_Solver.Models
 
             sb.AppendLine($"TABLEAU Iteration {iter}");
 
-            // Column headers
             sb.Append(PadString("Basis"));
             for (int j = 0; j < ns; j++) sb.Append(PadString(varNames[j]));
             sb.Append(PadString("RHS"));
@@ -285,24 +272,18 @@ namespace Linear_Programming_Solver.Models
             string dash = new string('-', colWidth * (ns + 2));
             sb.AppendLine(dash);
 
-            // Print z row first
             sb.Append(PadString("z"));
             for (int j = 0; j < ns; j++) sb.Append(PadDouble(T[m, j]));
             sb.Append(PadDouble(T[m, ns]));
             sb.AppendLine();
 
-            // Print constraint rows
             for (int i = 0; i < m; i++)
             {
-                sb.Append(PadString(varNames[basis[i]])); // shows c1, c2, x1, etc.
+                sb.Append(PadString(varNames[basis[i]]));
                 for (int j = 0; j < ns; j++) sb.Append(PadDouble(T[i, j]));
                 sb.Append(PadDouble(T[i, ns]));
                 sb.AppendLine();
             }
         }
-
-
-        #endregion
     }
 }
-
