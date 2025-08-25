@@ -262,7 +262,9 @@ namespace Linear_Programming_Solver
             }
         }
 
+        private void Form1_Load(object sender, EventArgs e)
+        {
 
-
+        }
     }
 }
