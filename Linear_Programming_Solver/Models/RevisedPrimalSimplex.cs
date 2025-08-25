@@ -16,6 +16,7 @@ namespace Linear_Programming_Solver.Models
 
         public SimplexResult Solve(LPProblem original, Action<string, bool[,]> updatePivot = null)
         {
+
             // 1) Make a working clone and convert to Max with <= and b >= 0 (slacks start basic)
             var model = Standardize(original);
 
@@ -79,7 +80,7 @@ namespace Linear_Programming_Solver.Models
                 if (enteringPos == -1)
                 {
                     // Optimal
-                    var final = BuildFinalSummary(Bidx, names, xB, z, "OPTIMAL");
+                    var final = BuildFinalSummary(original, Bidx, names, xB, "OPTIMAL");
                     report.Append(final.Report);
                     return final;
                 }
@@ -107,7 +108,7 @@ namespace Linear_Programming_Solver.Models
                 }
                 if (leaveRow == -1)
                 {
-                    var final = BuildFinalSummary(Bidx, names, xB, z, "UNBOUNDED");
+                    var final = BuildFinalSummary(original, Bidx, names, xB, "UNBOUNDED");
                     report.Append(final.Report);
                     return final;
                 }
@@ -145,8 +146,9 @@ namespace Linear_Programming_Solver.Models
             var model = original.Clone();
 
             // Maximize
-            if (model.ObjectiveSense == Sense.Min)
+            if (model.ObjectiveSense == Sense.Max)
                 for (int i = 0; i < model.C.Length; i++) model.C[i] = -model.C[i];
+
 
             // Convert GE to LE by multiplying by -1; ensure b >= 0
             for (int i = 0; i < model.Constraints.Count; i++)
@@ -178,6 +180,7 @@ namespace Linear_Programming_Solver.Models
             }
             return model;
         }
+
         #endregion
 
         #region Printing
@@ -212,7 +215,7 @@ namespace Linear_Programming_Solver.Models
             // Price-out info
             if (rN != null)
             {
-                sb.AppendLine("\nReduced costs r_N = c_N - c_B^T B^{-1} N:");
+                sb.AppendLine("\nReduced costs (r_N = c_N - c_B^T B^{-1} N):");
                 for (int j = 0; j < rN.Length; j++)
                     sb.AppendLine($"  r({Nidx[j]}:{names[Nidx[j]]}) = {rN[j]:0.###}");
             }
@@ -253,7 +256,9 @@ namespace Linear_Programming_Solver.Models
             return sb.ToString();
         }
 
-        private static SimplexResult BuildFinalSummary(int[] Bidx, string[] names, double[] xB, double z, string status)
+        // private static SimplexResult BuildFinalSummary(int[] Bidx, string[] names, double[] xB, double z, string status)
+        private static SimplexResult BuildFinalSummary(LPProblem original, int[] Bidx, string[] names, double[] xB, string status)
+
         {
             // Map basic x_B back to x variables only
             int nVars = names.Count(s => s.StartsWith("x"));
@@ -267,12 +272,20 @@ namespace Linear_Programming_Solver.Models
             var sb = new StringBuilder();
             sb.AppendLine($"\nStatus: {status}");
             for (int j = 0; j < nVars; j++) sb.AppendLine($"  x{j + 1} = {Math.Round(x[j], 3):0.###}");
-            sb.AppendLine($"  z* = {Math.Round(z, 3):0.###}");
+            //  sb.AppendLine($"  z* = {Math.Round(z, 3):0.###}");
 
             var summary = new StringBuilder();
             summary.AppendLine($"Status: {status}");
-            summary.AppendLine($"z* = {Math.Round(z, 3):0.###}");
+            //  summary.AppendLine($"z* = {Math.Round(z, 3):0.###}");
             summary.AppendLine("x* = [" + string.Join(", ", x.Select(v => Math.Round(v, 3))) + "]");
+
+            // Recompute objective using ORIGINAL c (not flipped/slack-modified)
+            double zOriginal = 0;
+            for (int j = 0; j < nVars; j++)
+                zOriginal += original.C[j] * x[j];
+
+            sb.AppendLine($"  z* = {Math.Round(zOriginal, 3):0.###}");
+            summary.AppendLine($"z* = {Math.Round(zOriginal, 3):0.###}");
 
             return new SimplexResult { Report = sb.ToString(), Summary = summary.ToString() };
         }
