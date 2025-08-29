@@ -7,134 +7,189 @@ using System.Text.RegularExpressions;
 
 namespace Linear_Programming_Solver.Models
 {
+    /// <summary>
+    /// Branch-and-Bound for pure integer programs (all decision variables integral).
+    /// - Root and each subproblem LP relaxation is solved with:
+    ///   * "Primal Simplex" (PrimalSimplex.cs) if all constraints are <=
+    ///   * "Dual Simplex" (DualSimplex.cs) if any constraint is >= or =
+    /// - Branching variable: fractional part closest to 0.5, lowest subscript for ties.
+    /// - Ceil branch explored first (good for maximization).
+    /// - Stops immediately if root LP solution is integral.
+    /// - Hierarchical subproblem naming (e.g., Subproblem 1.1, 1.2).
+    /// - Detailed logging via updatePivot callback.
+    /// </summary>
     public class BranchAndBound : ILPAlgorithm
     {
-        private LPSolver solver = new LPSolver();
-        private int subProblemCounter = 1;
+        private readonly LPSolver _solver = new LPSolver();
+        private int _subProblemCounter = 1;
         private const double EPS = 1e-6;
-        private const int MaxDepth = 100;
+        private const int MaxDepth = 200;
 
         public double BestObjective { get; private set; } = double.NegativeInfinity;
         public double[] BestSolution { get; private set; }
-        private string _relaxationAlgorithm = "Primal Simplex";
-
-        public void SetRelaxationAlgorithm(string algorithm)
-        {
-            if (!string.IsNullOrWhiteSpace(algorithm))
-                _relaxationAlgorithm = algorithm.Trim();
-        }
 
         public SimplexResult Solve(LPProblem problem, Action<string, bool[,]> updatePivot = null)
         {
-            subProblemCounter = 1;
+            _subProblemCounter = 1;
             BestObjective = double.NegativeInfinity;
             BestSolution = null;
 
-            _relaxationAlgorithm = "Primal Simplex";
-            if (problem.Constraints.Any(c => c.Relation == Rel.GE))
-                updatePivot?.Invoke("Warning: GE constraints detected. Normalizing to LE for Primal Simplex.\n", null);
+            void Log(string msg) => updatePivot?.Invoke(msg + Environment.NewLine, null);
 
-            updatePivot?.Invoke($"Branch & Bound: Using {_relaxationAlgorithm} for LP relaxations.\n", null);
+            // 1. Choose algorithm for root problem
+            string rootAlgo = ChooseAlgorithm(problem);
+            Log($"Branch & Bound: Using {rootAlgo} for the ROOT LP relaxation.");
 
-            SimplexResult lpResult;
+            // 2. Solve root LP relaxation
+            SimplexResult rootRes;
             try
             {
-                lpResult = solver.Solve(problem, _relaxationAlgorithm, updatePivot);
+                rootRes = _solver.Solve(problem, rootAlgo, updatePivot);
             }
             catch (Exception ex)
             {
-                updatePivot?.Invoke($"Root Problem LP relaxation infeasible or error: {ex.Message}\n", null);
+                Log($"Root Problem: LP relaxation infeasible or error: {ex.Message}");
                 return new SimplexResult { Report = "LP relaxation infeasible", Summary = "" };
             }
 
-            double[] xLP = ParseSolutionVector(lpResult.Summary, problem.NumVars, updatePivot);
-            double zLP = ParseObjectiveValue(lpResult.Summary);
+            // Try to parse solution vector
+            var xRoot = ParseSolutionVector(rootRes.Summary, problem.NumVars, updatePivot);
 
-            updatePivot?.Invoke($"Root Problem LP optimal solution: z* = {zLP:0.###}, x* = [{string.Join(", ", xLP.Select(v => v.ToString("0.###", CultureInfo.InvariantCulture)))}]\n", null);
-            updatePivot?.Invoke("Root Problem optimal tableau displayed above.\n", null);
-
-            SolveSubproblem(problem, "Root Problem (Branching)", updatePivot, 0);
-
-            var sb = new StringBuilder();
-            sb.AppendLine("Branch & Bound Finished.");
-            if (BestSolution == null)
-                sb.AppendLine("No integer-feasible solution found.");
-            else
+            // If parsing fails, try from tableau
+            if (xRoot.Length == 0 || xRoot.All(v => Math.Abs(v) < EPS))
             {
-                sb.AppendLine($"Best integer z* = {BestObjective:0.###}");
-                sb.AppendLine("Best integer x* = [" + string.Join(", ", BestSolution.Select(v => v.ToString("0.###", CultureInfo.InvariantCulture))) + "]");
+                xRoot = ParseSolutionVectorFromTableau(rootRes.Summary, problem.NumVars, updatePivot);
             }
 
-            return new SimplexResult
+            // If still invalid, report error
+            if (xRoot.Length != problem.NumVars)
             {
-                Report = sb.ToString(),
-                Summary = sb.ToString()
-            };
+                Log($"Root Problem: Failed to parse valid solution vector. Expected {problem.NumVars} variables.");
+                return new SimplexResult { Report = "Failed to parse root solution", Summary = "" };
+            }
+
+            var zRoot = ParseObjectiveValue(rootRes.Summary);
+
+            Log($"Root Problem LP solution: z* = {zRoot:0.###}, x* = [{string.Join(", ", xRoot.Select(v => v.ToString("0.###", CultureInfo.InvariantCulture)))}]");
+            Log("Root Problem optimal tableau displayed above.");
+
+            // 3. Check if root solution is integral
+            if (IsIntegral(xRoot) && IsFeasible(xRoot, problem))
+            {
+                BestObjective = zRoot;
+                BestSolution = xRoot.Select(RoundInt).ToArray();
+                Log("Root Problem is already integral and feasible. Branch & Bound not required.");
+                return BuildReport();
+            }
+
+            // 4. Otherwise start branch and bound
+            Log("Root solution is fractional → starting Branch & Bound.");
+            SolveNode(problem, "Root Problem", "", updatePivot, 0);
+
+            return BuildReport();
+
+            SimplexResult BuildReport()
+            {
+                var sb = new StringBuilder();
+                sb.AppendLine("Branch & Bound Finished.");
+                if (BestSolution == null)
+                {
+                    sb.AppendLine("No integer-feasible solution found.");
+                }
+                else
+                {
+                    sb.AppendLine($"Best integer z* = {BestObjective:0.###}");
+                    sb.AppendLine("Best integer x* = [" + string.Join(", ", BestSolution.Select(v => v.ToString("0.###", CultureInfo.InvariantCulture))) + "]");
+                }
+                return new SimplexResult { Report = sb.ToString(), Summary = sb.ToString() };
+            }
         }
 
-        private void SolveSubproblem(LPProblem problem, string name, Action<string, bool[,]> updatePivot, int depth)
+        /// <summary>
+        /// Recursive Branch & Bound node solver
+        /// </summary>
+        private void SolveNode(LPProblem problem, string name, string parentId, Action<string, bool[,]> updatePivot, int depth)
         {
+            void Log(string msg) => updatePivot?.Invoke(msg + Environment.NewLine, null);
+
             if (depth > MaxDepth)
             {
-                updatePivot?.Invoke($"{name}: Maximum depth reached → prune.\n", null);
+                Log($"{name}: Maximum recursion depth reached → prune.");
                 return;
             }
 
-            updatePivot?.Invoke($"\n{name}: Solving LP relaxation for branching...\n", null);
+            // Log constraints for debugging
+            Log($"{name}: Constraints: {string.Join("; ", problem.Constraints.Select(c => $"{string.Join(" + ", c.A.Select((a, i) => $"{a}x{i + 1}"))} {c.Relation} {c.B}"))}");
 
-            // Normalize GE constraints to LE for Primal Simplex
-            var normalized = problem.Clone();
-            foreach (var c in normalized.Constraints)
-            {
-                if (c.Relation == Rel.GE)
-                {
-                    for (int i = 0; i < c.A.Length; i++) c.A[i] = -c.A[i];
-                    c.B = -c.B;
-                    c.Relation = Rel.LE;
-                }
-            }
+            // Choose algorithm for this node
+            string algo = ChooseAlgorithm(problem);
+            Log($"\n{name}: Solving LP relaxation with {algo}...");
 
-            SimplexResult result;
+            SimplexResult res;
             try
             {
-                result = solver.Solve(normalized, _relaxationAlgorithm, updatePivot);
+                res = _solver.Solve(problem, algo, updatePivot);
             }
             catch (Exception ex)
             {
-                updatePivot?.Invoke($"{name}: LP relaxation infeasible or error: {ex.Message}\n", null);
+                Log($"{name}: LP relaxation infeasible or error: {ex.Message}");
                 return;
             }
 
-            double[] x = ParseSolutionVector(result.Summary, problem.NumVars, updatePivot);
-            double zValue = ParseObjectiveValue(result.Summary);
+            var x = ParseSolutionVector(res.Summary, problem.NumVars, updatePivot);
 
-            if (x.Length == 0)
+            // If parsing fails, try from tableau
+            if (x.Length == 0 || x.All(v => Math.Abs(v) < EPS))
             {
-                updatePivot?.Invoke($"{name}: Could not parse solution → prune.\n", null);
-                return;
+                x = ParseSolutionVectorFromTableau(res.Summary, problem.NumVars, updatePivot);
             }
 
-            updatePivot?.Invoke($"{name} LP solution: z* = {zValue:0.###}, x* = [{string.Join(", ", x.Select(v => v.ToString("0.###", CultureInfo.InvariantCulture)))}]\n", null);
-
-            if (zValue <= BestObjective + EPS)
+            if (x.Length != problem.NumVars)
             {
-                updatePivot?.Invoke($"{name} pruned: z* = {zValue:0.###} <= BestObjective = {BestObjective:0.###}\n", null);
+                Log($"{name}: Failed to parse valid solution vector. Expected {problem.NumVars} variables.");
                 return;
             }
 
-            updatePivot?.Invoke($"{name}: Checking integer feasibility for {x.Length} variables (expected {problem.NumVars})\n", null);
+            var z = ParseObjectiveValue(res.Summary);
+
+            Log($"{name} LP solution: z* = {z:0.###}, x* = [{string.Join(", ", x.Select(v => v.ToString("0.###", CultureInfo.InvariantCulture)))}]");
+
+            // Validate solution feasibility
+            if (!IsFeasible(x, problem))
+            {
+                Log($"{name}: Solution x* = [{string.Join(", ", x.Select(v => v.ToString("0.###")))}] is infeasible for constraints.");
+                return;
+            }
+
+            // Bound pruning
+            if (z <= BestObjective + EPS)
+            {
+                Log($"{name}: pruned by bound (z* ≤ current best {BestObjective:0.###}).");
+                return;
+            }
+
+            // Check integrality
+            if (IsIntegral(x))
+            {
+                BestObjective = z;
+                BestSolution = x.Select(RoundInt).ToArray();
+                Log($"{name} is integer feasible. Updated BestObjective = {BestObjective:0.###}");
+                return;
+            }
+
+            // Branching variable: fractional part closest to 0.5, lowest subscript for ties
             int fracIndex = -1;
-            double minDistanceToHalf = double.MaxValue;
+            double minDist = double.MaxValue;
             for (int i = 0; i < x.Length; i++)
             {
                 double fracPart = x[i] - Math.Floor(x[i]);
-                if (fracPart > EPS && fracPart < 1 - EPS)
+                if (fracPart > EPS && (1 - fracPart) > EPS) // fractional
                 {
-                    double distance = Math.Abs(fracPart - 0.5);
-                    updatePivot?.Invoke($"Checking x{i + 1} = {x[i]:0.######}, fracPart = {fracPart:0.######}, distance to 0.5 = {distance:0.######}\n", null);
-                    if (distance < minDistanceToHalf || (distance == minDistanceToHalf && i < fracIndex))
+                    double dist = Math.Abs(fracPart - 0.5);
+                    Log($"Checking x{i + 1} = {x[i]:0.######}, fracPart = {fracPart:0.######}, distance to 0.5 = {dist:0.######}");
+                    if (dist < minDist || (dist == minDist && i < fracIndex))
                     {
-                        minDistanceToHalf = distance;
+                        minDist = dist;
                         fracIndex = i;
                     }
                 }
@@ -142,114 +197,208 @@ namespace Linear_Programming_Solver.Models
 
             if (fracIndex == -1)
             {
-                BestObjective = zValue;
-                BestSolution = x;
-                updatePivot?.Invoke($"{name} is integer feasible. Updated BestObjective = {BestObjective:0.###}\n", null);
+                Log($"{name}: No fractional variable found but solution not integral → prune.");
                 return;
             }
 
-            double xi = x[fracIndex];
-            double floor = Math.Floor(xi);
-            double ceil = Math.Ceiling(xi);
+            double fracVal = x[fracIndex];
+            int floorVal = (int)Math.Floor(fracVal);
+            int ceilVal = (int)Math.Ceiling(fracVal);
 
+            Log($"{name}: branching on x{fracIndex + 1} = {fracVal:0.###} (floor={floorVal}, ceil={ceilVal})");
+
+            // Generate hierarchical subproblem IDs
+            string ceilId = string.IsNullOrEmpty(parentId) ? $"{_subProblemCounter}" : $"{parentId}.{_subProblemCounter - _subProblemCounter + 1}";
+            string floorId = string.IsNullOrEmpty(parentId) ? $"{_subProblemCounter + 1}" : $"{parentId}.{_subProblemCounter - _subProblemCounter + 2}";
+            _subProblemCounter += 2;
+
+            // Left branch: xi ≤ floorVal
             var left = problem.Clone();
             left.Constraints.Add(new Constraint
             {
                 A = UnitVector(problem.NumVars, fracIndex),
                 Relation = Rel.LE,
-                B = floor
+                B = floorVal
             });
 
+            // Right branch: xi ≥ ceilVal
             var right = problem.Clone();
             right.Constraints.Add(new Constraint
             {
                 A = UnitVector(problem.NumVars, fracIndex),
                 Relation = Rel.GE,
-                B = ceil
+                B = ceilVal
             });
 
-            string leftName = $"Subproblem {subProblemCounter++}: x{fracIndex + 1} <= {floor}";
-            string rightName = $"Subproblem {subProblemCounter++}: x{fracIndex + 1} >= {ceil}";
+            string leftName = $"Subproblem {floorId}: x{fracIndex + 1} ≤ {floorVal}";
+            string rightName = $"Subproblem {ceilId}: x{fracIndex + 1} ≥ {ceilVal}";
 
-            updatePivot?.Invoke($"{name}: Branching on x{fracIndex + 1} = {xi:0.###}\n → {leftName}\n → {rightName}\n", null);
+            Log($"{name}: → {rightName} (ceil first)");
+            Log($"{name}: → {leftName}");
 
-            // Solve ceil branch first for maximization
-            SolveSubproblem(right, rightName, updatePivot, depth + 1);
-            SolveSubproblem(left, leftName, updatePivot, depth + 1);
+            SolveNode(right, rightName, ceilId, updatePivot, depth + 1);
+            SolveNode(left, leftName, floorId, updatePivot, depth + 1);
         }
+
+        // ------------------ Helpers ------------------------
+
+        private static string ChooseAlgorithm(LPProblem p)
+        {
+            // If any constraint is >= or =, use DualSimplex.cs; else PrimalSimplex.cs
+            bool hasGEorEQ = p.Constraints.Any(c => c.Relation == Rel.GE || c.Relation == Rel.EQ);
+            return hasGEorEQ ? "Dual Simplex" : "Primal Simplex";
+        }
+
+        private static bool IsIntegral(double[] x)
+        {
+            for (int i = 0; i < x.Length; i++)
+                if (Math.Abs(x[i] - Math.Round(x[i])) > EPS)
+                    return false;
+            return true;
+        }
+
+        private static bool IsFeasible(double[] x, LPProblem problem)
+        {
+            foreach (var constraint in problem.Constraints)
+            {
+                double sum = 0;
+                for (int i = 0; i < x.Length; i++)
+                    sum += constraint.A[i] * x[i];
+                if (constraint.Relation == Rel.LE && sum > constraint.B + EPS)
+                    return false;
+                if (constraint.Relation == Rel.GE && sum < constraint.B - EPS)
+                    return false;
+                if (constraint.Relation == Rel.EQ && Math.Abs(sum - constraint.B) > EPS)
+                    return false;
+            }
+            // Check non-negativity
+            for (int i = 0; i < x.Length; i++)
+                if (x[i] < -EPS)
+                    return false;
+            return true;
+        }
+
+        private static double RoundInt(double v) => Math.Round(v);
 
         private static double[] UnitVector(int size, int index)
         {
-            double[] v = new double[size];
+            var v = new double[size];
             v[index] = 1.0;
             return v;
         }
 
         private static double[] ParseSolutionVector(string summary, int expectedNumVars, Action<string, bool[,]> updatePivot = null)
         {
+            void Log(string msg) => updatePivot?.Invoke(msg + Environment.NewLine, null);
             try
             {
                 int start = summary.IndexOf("x* = [");
                 if (start < 0)
                 {
-                    updatePivot?.Invoke("ParseSolutionVector: No 'x* = [' found in summary.\n", null);
+                    Log("ParseSolutionVector: No 'x* = [' found in summary.");
                     return Array.Empty<double>();
                 }
                 start += 6;
                 int end = summary.IndexOf("]", start);
                 if (end < 0)
                 {
-                    updatePivot?.Invoke("ParseSolutionVector: No closing ']' found in summary.\n", null);
+                    Log("ParseSolutionVector: No closing ']' found in summary.");
                     return Array.Empty<double>();
                 }
                 string vec = summary.Substring(start, end - start).Trim();
-                updatePivot?.Invoke($"ParseSolutionVector: Raw vector string = '{vec}'\n", null);
-
-                // Extract numbers using Regex (matches integers or decimals with comma or period)
-                var matches = Regex.Matches(vec, @"\d+[\.,]\d+|\d+");
-                if (matches.Count != expectedNumVars)
+                if (string.IsNullOrWhiteSpace(vec))
                 {
-                    updatePivot?.Invoke($"ParseSolutionVector: Expected {expectedNumVars} numbers, but found {matches.Count}.\n", null);
+                    Log("ParseSolutionVector: Empty vector string.");
                     return Array.Empty<double>();
                 }
+                Log($"ParseSolutionVector: Raw vector string = '{vec}'");
 
-                var values = new double[matches.Count];
-                for (int i = 0; i < matches.Count; i++)
+                // Split on comma followed by space to handle locale-specific decimals
+                var parts = vec.Split(new[] { ", " }, StringSplitOptions.RemoveEmptyEntries);
+                var values = new double[expectedNumVars];
+                for (int i = 0; i < Math.Min(parts.Length, expectedNumVars); i++)
                 {
-                    string numStr = matches[i].Value.Replace(',', '.');
+                    string numStr = parts[i].Trim().Replace(',', '.');
                     values[i] = double.Parse(numStr, NumberStyles.Any, CultureInfo.InvariantCulture);
                 }
-
-                updatePivot?.Invoke($"ParseSolutionVector: Parsed {values.Length} values: [{string.Join(", ", values.Select(v => v.ToString("0.######", CultureInfo.InvariantCulture)))}]\n", null);
-
+                if (parts.Length != expectedNumVars)
+                {
+                    Log($"ParseSolutionVector: Expected {expectedNumVars} numbers, but found {parts.Length}.");
+                    return Array.Empty<double>();
+                }
+                Log($"ParseSolutionVector: Parsed {values.Length} values: [{string.Join(", ", values.Select(v => v.ToString("0.######", CultureInfo.InvariantCulture)))}]");
                 return values;
             }
             catch (Exception ex)
             {
-                updatePivot?.Invoke($"ParseSolutionVector error: {ex.Message}\n", null);
-                Console.WriteLine($"ParseSolutionVector error: {ex.Message}");
+                Log($"ParseSolutionVector error: {ex.Message}");
                 return Array.Empty<double>();
             }
+        }
+
+        private static double[] ParseSolutionVectorFromTableau(string summary, int numVars, Action<string, bool[,]> updatePivot = null)
+        {
+            void Log(string msg) => updatePivot?.Invoke(msg + Environment.NewLine, null);
+            var values = new double[numVars];
+            for (int i = 0; i < numVars; i++) values[i] = 0;
+
+            var lines = summary.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            bool foundSolution = false;
+
+            foreach (var line in lines)
+            {
+                var trimmed = line.Trim();
+                // Match basic variables (x1, x2, ..., or v1, v2, ...)
+                if (trimmed.StartsWith("x") || trimmed.StartsWith("v"))
+                {
+                    var parts = Regex.Split(trimmed, @"\s+");
+                    if (parts.Length < 2) continue;
+
+                    string varName = parts[0];
+                    if (varName.Length < 2 || !(varName[0] == 'x' || varName[0] == 'v')) continue;
+
+                    if (!int.TryParse(varName.Substring(1), out int varIndex)) continue;
+                    if (varIndex < 1 || varIndex > numVars) continue;
+
+                    string rhsStr = parts[parts.Length - 1].Replace(',', '.');
+                    if (double.TryParse(rhsStr, NumberStyles.Any, CultureInfo.InvariantCulture, out double rhsVal))
+                    {
+                        values[varIndex - 1] = rhsVal;
+                        foundSolution = true;
+                    }
+                }
+            }
+
+            if (!foundSolution)
+            {
+                Log("ParseSolutionVectorFromTableau: No valid solution found in tableau.");
+                return new double[numVars]; // Return zeros to trigger feasibility check
+            }
+
+            Log($"ParseSolutionVectorFromTableau: Parsed values: [{string.Join(", ", values.Select(v => v.ToString("0.######", CultureInfo.InvariantCulture)))}]");
+            return values;
         }
 
         private static double ParseObjectiveValue(string summary)
         {
             try
             {
-                foreach (var line in summary.Split('\n'))
+                foreach (var raw in summary.Split('\n'))
                 {
+                    var line = raw.Trim();
                     if (line.StartsWith("z*"))
                     {
                         var parts = line.Split('=');
-                        if (parts.Length == 2 && double.TryParse(parts[1].Trim().Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out double val))
-                            return val;
+                        if (parts.Length == 2)
+                        {
+                            var s = parts[1].Trim().Replace(',', '.');
+                            if (double.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out double val))
+                                return val;
+                        }
                     }
                 }
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"ParseObjectiveValue error: {ex.Message}");
-            }
+            catch { }
             return 0;
         }
     }

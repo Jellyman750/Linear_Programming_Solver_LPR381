@@ -133,7 +133,7 @@ namespace Linear_Programming_Solver
                     case "Branch and Bound Knapsack":
                         {
                             var bbSolver = new BranchAndBound();
-                            bbSolver.SetRelaxationAlgorithm("Primal Simplex"); // Default to Primal Simplex for relaxations
+                            //bbSolver.SetRelaxationAlgorithm("Primal Simplex"); // Default to Primal Simplex for relaxations
                             var result = bbSolver.Solve(problem, (text, highlight) => AppendPivotRow(text, highlight));
                             iterationOutputTextBox.AppendText("\n\nFinal Report:\n" + result.Report);
                             iterationOutputTextBox.AppendText("\n\nSummary:\n" + result.Summary);
