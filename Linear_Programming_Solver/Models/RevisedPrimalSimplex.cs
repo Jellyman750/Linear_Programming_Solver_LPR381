@@ -16,6 +16,11 @@ namespace Linear_Programming_Solver.Models
 
         public SimplexResult Solve(LPProblem original, Action<string, bool[,]> updatePivot = null)
         {
+            
+            bool ok = original.Constraints.All(c => c.Relation == Rel.LE && c.B >= -1e-9);
+            if (!ok)
+                throw new Exception("Revised Primal Simplex currently supports only <= constraints with RHS >= 0. Use Dual Simplex for models with >= or =.");
+            
 
             // 1) Make a working clone and convert to Max with <= and b >= 0 (slacks start basic)
             var model = Standardize(original);

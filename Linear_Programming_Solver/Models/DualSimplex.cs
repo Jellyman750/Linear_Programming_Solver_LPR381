@@ -6,7 +6,7 @@ namespace Linear_Programming_Solver.Models
 {
     /// <summary>
     /// Dual Simplex using tableau updates.
-    /// Starts from a dual-feasible tableau (z-row nonnegative) and fixes infeasible RHS (negative b).
+    /// Starts from a dual-feasible tableau (z-row >= 0) and fixes infeasible RHS (negative b).
     /// </summary>
     internal class DualSimplex : ILPAlgorithm
     {
@@ -14,28 +14,35 @@ namespace Linear_Programming_Solver.Models
 
         public SimplexResult Solve(LPProblem original, Action<string, bool[,]> updatePivot = null)
         {
-            // Put in standard max form with <= and b >= 0 where possible; then build same tableau as primal solver.
+            // 1) Standardize to Max with only <= and b >= 0 (split '=' into two <=)
             var model = PrepareForTableau(original);
+
+            // 2) Build primal-style tableau with slack basis
             var T = BuildTableau(model, out var basis, out var varNames);
 
-            // Make z-row dual feasible: if any negative reduced costs remain, run a few primal pivots to fix.
-            ForceDualFeasibility(T);
+            // 3) Make the z-row dual-feasible (all reduced costs >= 0) AND update basis during those pivots
+            ForceDualFeasibility(T, basis);
 
+            // 4) Show initial tableau
+            // Show initial tableau (highlight z-row)
             // Show initial tableau
             var sb0 = new StringBuilder();
             AppendTableau(sb0, T, basis, varNames, 0);
             updatePivot?.Invoke(sb0.ToString(), null);
 
+
+
+            // 5) Dual simplex iterations: fix negative RHS while maintaining z-row >= 0
             int iter = 1;
             while (true)
             {
                 if (iter > 10000) throw new Exception("Iteration limit exceeded (Dual Simplex).");
 
-                int m = T.GetLength(0) - 1;
-                int nNoRhs = T.GetLength(1) - 1;
-
-                // Choose leaving row: most negative RHS (infeasible basic)
+                int m = T.GetLength(0) - 1;     // constraint rows
+                int nNoRhs = T.GetLength(1) - 1; // columns excluding RHS
                 int rhsCol = nNoRhs;
+
+                // Choose leaving row: most negative RHS
                 int leave = -1;
                 double mostNeg = -Eps;
                 for (int i = 0; i < m; i++)
@@ -46,13 +53,27 @@ namespace Linear_Programming_Solver.Models
                         leave = i;
                     }
                 }
+
+                // If none negative -> primal feasible; since z-row is >= 0, we're optimal
                 if (leave == -1)
                 {
+
                     // primal feasible now; optimal (dual feasible was maintained)
+                    // print final tableau with Z row (row 0) highlighted
+                    var sbFinal = new StringBuilder();
+                    AppendTableau(sbFinal, T, basis, varNames, iter);
+
+                    bool[,] highlightFinal = new bool[T.GetLength(0), T.GetLength(1)];
+                    int zRowIndex = 0; // <-- Z row is the first row
+                    for (int j = 0; j < T.GetLength(1); j++)
+                        highlightFinal[zRowIndex, j] = true;
+
+                    updatePivot?.Invoke(sbFinal.ToString(), highlightFinal);
+
                     return FinalizeReport(new StringBuilder(), T, basis, varNames, "OPTIMAL");
                 }
 
-                // Choose entering col j that minimizes ratio (z_j / a_{leave,j}) over a_{leave,j} < 0.
+                // Choose entering column j minimizing z_j / |a_{leave,j}| over a_{leave,j} < 0
                 int enter = -1;
                 double bestRatio = double.PositiveInfinity;
                 for (int j = 0; j < nNoRhs; j++)
@@ -60,7 +81,7 @@ namespace Linear_Programming_Solver.Models
                     double a = T[leave, j];
                     if (a < -Eps)
                     {
-                        double ratio = T[m, j] / (-a); // (reduced cost)/|a|
+                        double ratio = T[m, j] / (-a);
                         if (ratio < bestRatio - 1e-12)
                         {
                             bestRatio = ratio;
@@ -70,24 +91,24 @@ namespace Linear_Programming_Solver.Models
                 }
                 if (enter == -1)
                 {
-                    return FinalizeReport(new StringBuilder().AppendLine("INFEASIBLE (dual step found no entering)"),
+                    return FinalizeReport(new StringBuilder().AppendLine("INFEASIBLE (no entering column found)"),
                         T, basis, varNames, "INFEASIBLE");
                 }
 
-                // Pivot
+                // Pivot and update basis
                 Pivot(T, leave, enter);
                 basis[leave] = enter;
 
-                // Print iteration
+                // Print iteration with highlight
                 var sb = new StringBuilder();
                 AppendTableau(sb, T, basis, varNames, iter);
 
-                // highlight pivot row and column
-                var highlight = new bool[m + 1, nNoRhs + 1]; // including z-row for uniformity in color pass
+                var highlight = new bool[m + 1, nNoRhs + 1];
                 for (int j = 0; j < nNoRhs + 1; j++) highlight[leave, j] = true;
                 for (int i = 0; i < m + 1; i++) highlight[i, enter] = true;
 
                 updatePivot?.Invoke(sb.ToString(), highlight);
+
                 iter++;
             }
         }
@@ -97,17 +118,19 @@ namespace Linear_Programming_Solver.Models
         {
             var model = original.Clone();
 
-            // Convert to max
+            // Convert to Max
             if (model.ObjectiveSense == Sense.Min)
                 for (int i = 0; i < model.C.Length; i++) model.C[i] = -model.C[i];
 
-            // Convert GE to LE and make b >= 0 where possible (flip rows)
-            var expanded = new LPProblem { C = (double[])model.C.Clone() };
+            // Build expanded model with only <= and b >= 0; split '='
+            var expanded = new LPProblem { C = (double[])model.C.Clone(), ObjectiveSense = Sense.Max };
             foreach (var cons in model.Constraints)
             {
                 if (cons.Relation == Rel.EQ)
                 {
+                    // +row <= b
                     expanded.Constraints.Add(new Constraint { A = (double[])cons.A.Clone(), B = cons.B, Relation = Rel.LE });
+                    // -row <= -b
                     var neg = new Constraint { A = (double[])cons.A.Clone(), B = -cons.B, Relation = Rel.LE };
                     for (int j = 0; j < neg.A.Length; j++) neg.A[j] *= -1;
                     expanded.Constraints.Add(neg);
@@ -117,12 +140,14 @@ namespace Linear_Programming_Solver.Models
                     var row = cons.Clone();
                     if (row.Relation == Rel.GE)
                     {
+                        // multiply by -1 to turn >= into <=
                         for (int j = 0; j < row.A.Length; j++) row.A[j] *= -1;
                         row.B *= -1;
                         row.Relation = Rel.LE;
                     }
                     if (row.B < -Eps)
                     {
+                        // ensure b >= 0
                         for (int j = 0; j < row.A.Length; j++) row.A[j] *= -1;
                         row.B *= -1;
                     }
@@ -140,59 +165,70 @@ namespace Linear_Programming_Solver.Models
 
             var T = new double[m + 1, n + s + 1];
 
-            // rows
+            // constraints
             for (int i = 0; i < m; i++)
             {
                 var row = model.Constraints[i];
                 for (int j = 0; j < n; j++) T[i, j] = row.A[j];
-                T[i, n + i] = 1.0;
-                T[i, n + s] = row.B;
+                T[i, n + i] = 1.0;                // slack
+                T[i, n + s] = row.B;              // RHS
             }
-            // z row
+
+            // z row = -c for decision vars
             for (int j = 0; j < n; j++) T[m, j] = -model.C[j];
 
-            // basis = slacks
+            // initial basis = slacks
             basis = Enumerable.Range(n, s).ToArray();
 
+            // variable names (x then c)
             varNames = new string[n + s];
             for (int j = 0; j < n; j++) varNames[j] = $"x{j + 1}";
             for (int j = 0; j < s; j++) varNames[n + j] = $"c{j + 1}";
+
             return T;
         }
 
-        private static void ForceDualFeasibility(double[,] T)
+        /// <summary>
+        /// Ensures z-row >= 0 by performing primal pivots if needed.
+        /// IMPORTANT: updates the basis array alongside tableau.
+        /// </summary>
+        private static void ForceDualFeasibility(double[,] T, int[] basis)
         {
-            // Ensure all z-row entries are >= 0 by performing a few primal pivots if needed.
-            // Simple loop: while min z_j < 0, pivot with the usual primal rule (ratio test).
             int m = T.GetLength(0) - 1;
             int rhsCol = T.GetLength(1) - 1;
+            int nNoRhs = rhsCol;
 
-            for (int guard = 0; guard < 50; guard++)
+            // Loop until all reduced costs are >= 0 or until we hit a guard
+            for (int guard = 0; guard < 100; guard++)
             {
                 int entering = -1;
                 double minVal = -Eps;
-                int nNoRhs = rhsCol;
                 for (int j = 0; j < nNoRhs; j++)
                     if (T[m, j] < minVal) { minVal = T[m, j]; entering = j; }
-                if (entering == -1) return; // dual feasible already
 
+                if (entering == -1) return; // already dual-feasible
+
+                // choose leaving by primal ratio test (like primal simplex)
                 int leave = -1;
                 double bestRatio = double.PositiveInfinity;
                 for (int i = 0; i < m; i++)
                 {
-                    if (T[i, entering] > Eps)
+                    double a = T[i, entering];
+                    if (a > Eps)
                     {
-                        double ratio = T[i, rhsCol] / T[i, entering];
+                        double ratio = T[i, rhsCol] / a;
                         if (ratio < bestRatio - 1e-12) { bestRatio = ratio; leave = i; }
                     }
                 }
-                if (leave == -1) return; // unbounded; let dual simplex handle later
+                if (leave == -1) return; // cannot fix via primal step; stop and let dual phase handle
+
                 Pivot(T, leave, entering);
+                basis[leave] = entering;  // ✅ keep basis consistent with tableau
             }
         }
         #endregion
 
-        #region Core ops / printing (mirrors your PrimalSimplex style)
+        #region Core ops / printing
         private static void Pivot(double[,] T, int row, int col)
         {
             int R = T.GetLength(0);
@@ -211,8 +247,8 @@ namespace Linear_Programming_Solver.Models
 
         private static void AppendTableau(StringBuilder sb, double[,] T, int[] basis, string[] varNames, int iter)
         {
-            int m = T.GetLength(0) - 1; // constraints
-            int ns = T.GetLength(1) - 1; // columns excluding RHS
+            int m = T.GetLength(0) - 1;         // constraints
+            int ns = T.GetLength(1) - 1;        // columns excluding RHS
             int colWidth = 12;
 
             string PadString(string s) => s.PadLeft(colWidth);
@@ -247,11 +283,18 @@ namespace Linear_Programming_Solver.Models
         private static SimplexResult FinalizeReport(StringBuilder report, double[,] T, int[] basis, string[] varNames, string status)
         {
             int m = T.GetLength(0) - 1;
-            int n = varNames.Count(v => v.StartsWith("x"));
+            int n = varNames.Count(v => v.StartsWith("x")); // decision variables
             var x = new double[n];
 
+            // Assign RHS to any decision variable that is currently basic
             for (int i = 0; i < m; i++)
-                if (basis[i] < n) x[basis[i]] = T[i, T.GetLength(1) - 1];
+            {
+                int basicCol = basis[i];
+                if (basicCol < n)
+                {
+                    x[basicCol] = T[i, T.GetLength(1) - 1];
+                }
+            }
 
             double z = T[m, T.GetLength(1) - 1];
 
