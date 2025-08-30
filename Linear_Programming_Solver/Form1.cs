@@ -156,13 +156,23 @@ namespace Linear_Programming_Solver
                         }
                     case "Branch and Bound":
                     case "Revised Branch and Bound":
-                    case "Branch and Bound Knapsack":
+                    //case "Branch and Bound Knapsack":
                         {
                             var bbSolver = new BranchAndBound();
                             var result = bbSolver.Solve(problem, (text, highlight) => AppendPivotRow(text, highlight));
                             iterationOutputTextBox.AppendText("\n\nFinal Report:\n" + result.Report);
                             iterationOutputTextBox.AppendText("\n\nSummary:\n" + result.Summary);
                             break;
+                        }
+                    case "Branch and Bound Knapsack":
+                        {
+                            var bbkSolver = new BranchAndBoundKnapsack();
+                            var result = bbkSolver.Solve(problem, (text, highlight) => AppendPivotRow(text, highlight));
+
+                            //iterationOutputTextBox.AppendText("\n\nFinal Report:\n" + result.Report);
+                            // iterationOutputTextBox.AppendText("\n\nSummary:\n" + result.Summary);
+                            break;
+
                         }
                     default:
                         iterationOutputTextBox.Text = "Error: Algorithm not supported.";
