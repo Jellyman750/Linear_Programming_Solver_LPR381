@@ -15,6 +15,7 @@ namespace Linear_Programming_Solver
         private TextBox lpInputTextBox;
         private RichTextBox iterationOutputTextBox;
         private ComboBox algorithmDropdown;
+        private Button sensitivityButton;
 
         public Form1()
         {
@@ -27,9 +28,9 @@ namespace Linear_Programming_Solver
             // Set form properties
             this.BackColor = Color.LightBlue;
             this.Text = "Linear Programming Solver";
-            this.Size = new Size(1200, 1000); // Increased form size for better layout
-            this.FormBorderStyle = FormBorderStyle.Sizable; // Allow resizing
-            this.MaximizeBox = true; // Enable maximize button
+            this.Size = new Size(1200, 1000);
+            this.FormBorderStyle = FormBorderStyle.Sizable;
+            this.MaximizeBox = true;
 
             // Title Label
             titleLabel = new Label();
@@ -45,7 +46,6 @@ namespace Linear_Programming_Solver
             importButton.Text = "Import";
             importButton.Size = new Size(115, 55);
             importButton.Location = new Point((this.ClientSize.Width / 2) - 130, 70);
-            importButton.TextAlign = ContentAlignment.MiddleCenter;
             importButton.Click += BtnUpload_Click;
             this.Controls.Add(importButton);
 
@@ -54,7 +54,6 @@ namespace Linear_Programming_Solver
             exportButton.Text = "Export";
             exportButton.Size = new Size(115, 55);
             exportButton.Location = new Point((this.ClientSize.Width / 2) + 15, 70);
-            exportButton.TextAlign = ContentAlignment.MiddleCenter;
             exportButton.Click += BtnExport_Click;
             this.Controls.Add(exportButton);
 
@@ -62,7 +61,7 @@ namespace Linear_Programming_Solver
             algorithmDropdown = new ComboBox();
             algorithmDropdown.DropDownStyle = ComboBoxStyle.DropDownList;
             algorithmDropdown.Items.AddRange(new string[]
-               {
+            {
                 "Primal Simplex",
                 "Revised Primal Simplex",
                 "Dual Simplex",
@@ -71,7 +70,7 @@ namespace Linear_Programming_Solver
                 "Cutting Plane",
                 "Revised Cutting Plane",
                 "Branch and Bound Knapsack"
-               });
+            });
             algorithmDropdown.Location = new Point((this.ClientSize.Width / 2) - 150, 150);
             algorithmDropdown.Width = 300;
             this.Controls.Add(algorithmDropdown);
@@ -87,23 +86,50 @@ namespace Linear_Programming_Solver
             // Iteration Output TextBox
             iterationOutputTextBox = new RichTextBox();
             iterationOutputTextBox.Multiline = true;
-            iterationOutputTextBox.Size = new Size(900, 400); // Wide and tall for large tableaus
-            iterationOutputTextBox.Location = new Point((this.ClientSize.Width / 2) - 450, 320); // Centered for width 900
-            iterationOutputTextBox.ScrollBars = RichTextBoxScrollBars.Both; // Vertical and horizontal scrollbars
-            iterationOutputTextBox.Font = new Font("Consolas", 9); // Smaller font for better fit
-            iterationOutputTextBox.WordWrap = false; // Disable word wrap for table alignment
+            iterationOutputTextBox.Size = new Size(900, 400);
+            iterationOutputTextBox.Location = new Point((this.ClientSize.Width / 2) - 450, 320);
+            iterationOutputTextBox.ScrollBars = RichTextBoxScrollBars.Both;
+            iterationOutputTextBox.Font = new Font("Consolas", 9);
+            iterationOutputTextBox.WordWrap = false;
             this.Controls.Add(iterationOutputTextBox);
 
             // Solve Button
             solveButton = new Button();
             solveButton.Text = "Solve LP";
             solveButton.Size = new Size(115, 55);
-            solveButton.Location = new Point((this.ClientSize.Width / 2) - 60, 750); // Positioned below RichTextBox
-            solveButton.TextAlign = ContentAlignment.MiddleCenter;
+            solveButton.Location = new Point((this.ClientSize.Width / 2) - 180, 750);
             solveButton.Click += btnSolve_Click;
             this.Controls.Add(solveButton);
+
+            // Sensitivity Analysis Button
+            sensitivityButton = new Button();
+            sensitivityButton.Text = "Sensitivity Analysis";
+            sensitivityButton.Size = new Size(180, 55);
+            sensitivityButton.Location = new Point((this.ClientSize.Width / 2) + 20, 750);
+            sensitivityButton.Click += btnSensitivityAnalysis_Click; // ? hooked correctly
+            this.Controls.Add(sensitivityButton);
         }
 
+        private void btnSensitivityAnalysis_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                iterationOutputTextBox.Clear();
+                var lpText = lpInputTextBox.Text;
+                var problem = LPParser.ParseFromText(lpText);
+
+                var analysis = new SensitivityAnalysis(problem);
+                string report = analysis.GenerateReport();
+
+                iterationOutputTextBox.AppendText("=== Sensitivity Analysis Report ===\n\n");
+                iterationOutputTextBox.AppendText(report);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Error running sensitivity analysis: " + ex.Message,
+                                "Analysis Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
 
         private void btnSolve_Click(object sender, EventArgs e)
         {
@@ -111,7 +137,7 @@ namespace Linear_Programming_Solver
             {
                 iterationOutputTextBox.Clear();
                 var lpText = lpInputTextBox.Text;
-                var problem = LPParser.ParseFromText(lpText); // Assumes LPParser is implemented
+                var problem = LPParser.ParseFromText(lpText);
                 string selectedAlgorithm = algorithmDropdown.SelectedItem?.ToString() ?? "";
 
                 switch (selectedAlgorithm)
@@ -133,7 +159,6 @@ namespace Linear_Programming_Solver
                     case "Branch and Bound Knapsack":
                         {
                             var bbSolver = new BranchAndBound();
-                            //bbSolver.SetRelaxationAlgorithm("Primal Simplex"); // Default to Primal Simplex for relaxations
                             var result = bbSolver.Solve(problem, (text, highlight) => AppendPivotRow(text, highlight));
                             iterationOutputTextBox.AppendText("\n\nFinal Report:\n" + result.Report);
                             iterationOutputTextBox.AppendText("\n\nSummary:\n" + result.Summary);
@@ -149,7 +174,6 @@ namespace Linear_Programming_Solver
                 iterationOutputTextBox.Text = "Error: " + ex.Message;
             }
         }
-
 
         private void BtnUpload_Click(object sender, EventArgs e)
         {
@@ -199,6 +223,7 @@ namespace Linear_Programming_Solver
                 }
             }
         }
+
         private void AppendPivotRow(string text, bool[,] highlight)
         {
             iterationOutputTextBox.SuspendLayout();
@@ -251,9 +276,6 @@ namespace Linear_Programming_Solver
             iterationOutputTextBox.ResumeLayout();
         }
 
-
-
-        // Example function: Add iteration steps manually
         public void AddIteration(string step)
         {
             if (!string.IsNullOrWhiteSpace(step))
@@ -262,9 +284,6 @@ namespace Linear_Programming_Solver
             }
         }
 
-        private void Form1_Load(object sender, EventArgs e)
-        {
-
-        }
+        private void Form1_Load(object sender, EventArgs e) { }
     }
 }
