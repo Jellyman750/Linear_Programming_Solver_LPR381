@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Globalization;
 using Linear_Programming_Solver.Models;
 
 namespace Linear_Programming_Solver.Analysis
@@ -107,26 +108,25 @@ namespace Linear_Programming_Solver.Analysis
 
         public string GetShadowPricesReport()
         {
-            int m = tableau.GetLength(0) - 1;
-            var sb = new StringBuilder("Shadow Prices:\n");
-            for (int i = 0; i < problem.Constraints.Count; i++)
+            int m = problem.Constraints.Count;
+            int nVars = problem.NumVars;
+
+            if (tableau == null) throw new InvalidOperationException("Tableau is null.");
+            if (tableau.GetLength(1) < nVars + m)
+                throw new InvalidOperationException("Tableau does not contain expected slack columns.");
+
+            var sb = new StringBuilder();
+            sb.AppendLine("Shadow Prices:");
+            for (int i = 0; i < m; i++)
             {
-                int row = i + 1; // Objective row is 0
-                double shadowPrice = 0;
-                for (int j = problem.NumVars; j < tableau.GetLength(1) - 1; j++) // Slack variables
-                {
-                    if (Math.Abs(tableau[row, j] - 1.0) < 1e-9 && basis.Contains(j))
-                    {
-                        shadowPrice = -tableau[0, j]; // Reduced cost of slack variable
-                        break;
-                    }
-                }
-                sb.AppendLine($"  Constraint {i + 1}: {shadowPrice:F3}");
+                double shadow = -tableau[0, nVars + i]; // Negative of reduced cost for slack variable
+                sb.AppendLine($"  Constraint {i + 1}: {shadow.ToString("F3", CultureInfo.InvariantCulture)}");
             }
+
             return sb.ToString();
         }
 
-        public SimplexResult SolveDualLP()
+        public SimplexResult SolveUsingDuality()
         {
             int m = problem.Constraints.Count;
             int n = problem.NumVars;
@@ -146,7 +146,7 @@ namespace Linear_Programming_Solver.Analysis
                 {
                     A = row,
                     B = problem.C[j],
-                    Relation = Rel.GE // Primal is maximize, dual is minimize
+                    Relation = Rel.GE // Primal is maximize → dual is minimize
                 });
             }
 
@@ -157,7 +157,61 @@ namespace Linear_Programming_Solver.Analysis
             };
 
             var solver = new LPSolver();
-            return solver.Solve(dualProblem, "Dual Simplex", (text, highlight) => { });
+            var traceSb = new StringBuilder();
+
+            // Capture iterations
+            Action<string, bool[,]> capture = (text, highlight) =>
+            {
+                if (!string.IsNullOrEmpty(text))
+                    traceSb.AppendLine(text.TrimEnd());
+            };
+
+            // Solve with Dual Simplex
+            SimplexResult dualResult;
+            try
+            {
+                dualResult = solver.Solve(dualProblem, "Dual Simplex", capture);
+                // Debug: Log raw solution and VarNames
+                traceSb.AppendLine($"Debug: Raw Solution = [{string.Join(", ", (dualResult.Solution ?? new double[0]).Select(x => x.ToString("F3", CultureInfo.InvariantCulture)))}]");
+                traceSb.AppendLine($"Debug: VarNames = [{string.Join(", ", dualResult.VarNames ?? new string[0])}]");
+            }
+            catch (Exception ex)
+            {
+                traceSb.AppendLine($"Error solving dual LP: {ex.Message}");
+                return new SimplexResult
+                {
+                    Report = traceSb.ToString(),
+                    Summary = "Error: " + ex.Message
+                };
+            }
+
+            // Format report
+            var report = new StringBuilder();
+            report.AppendLine("=== Duality Algorithm Solution ===");
+            report.AppendLine($"Dual Problem: Minimize {string.Join(" + ", dualProblem.C.Select((c, i) => $"{c.ToString("F3", CultureInfo.InvariantCulture)}y{i + 1}"))}");
+            report.AppendLine("Subject to:");
+            for (int i = 0; i < dualConstraints.Count; i++)
+            {
+                var c = dualConstraints[i];
+                report.AppendLine($"{string.Join(" + ", c.A.Select((a, j) => $"{a.ToString("F3", CultureInfo.InvariantCulture)}y{j + 1}"))} {c.Relation} {c.B.ToString("F3", CultureInfo.InvariantCulture)}");
+            }
+            report.AppendLine("\n=== Duality Algorithm Iterations ===");
+            report.AppendLine(traceSb.ToString().Trim());
+            report.AppendLine("\n=== Final Result ===");
+            report.AppendLine($"Status: {(dualResult.Summary?.Contains("OPTIMAL") ?? false ? "OPTIMAL" : "INFEASIBLE")}");
+            report.AppendLine($"w* = {dualResult.OptimalValue.ToString("F3", CultureInfo.InvariantCulture)}");
+            report.AppendLine($"y* = [{string.Join(", ", (dualResult.Solution ?? new double[0]).Take(n).Select(x => x.ToString("F3", CultureInfo.InvariantCulture)))}]");
+
+            return new SimplexResult
+            {
+                Report = report.ToString(),
+                Summary = dualResult.Summary,
+                OptimalValue = dualResult.OptimalValue,
+                Solution = dualResult.Solution?.Take(n).ToArray() ?? new double[n],
+                Tableau = dualResult.Tableau,
+                Basis = dualResult.Basis,
+                VarNames = dualResult.VarNames
+            };
         }
 
         // ===================== PRIVATE METHODS =====================

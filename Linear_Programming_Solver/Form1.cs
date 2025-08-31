@@ -110,7 +110,7 @@ namespace Linear_Programming_Solver
                 "Display Range",
                 "Apply Change",
                 "Show Shadow Prices",
-                "Solve Dual LP"
+                "Solve using Duality"
             });
             sensitivityValueTextBox = new TextBox { Location = new Point((this.ClientSize.Width / 2) + 130, 820), Width = 80, PlaceholderText = "Value", Visible = false };
             sensitivityExecuteButton = new Button { Text = "Execute", Location = new Point((this.ClientSize.Width / 2) + 220, 820), Size = new Size(80, 30), Visible = false };
@@ -212,9 +212,9 @@ namespace Linear_Programming_Solver
                         iterationOutputTextBox.AppendText(analysis.GetShadowPricesReport() + "\n");
                         break;
 
-                    case "Solve Dual LP":
-                        var dualResult = analysis.SolveDualLP();
-                        iterationOutputTextBox.AppendText("Dual LP Solution:\n" + dualResult.Summary + "\n");
+                    case "Solve using Duality":
+                        var dualResult = analysis.SolveUsingDuality();
+                        iterationOutputTextBox.AppendText("Solve using Duality:\n" + dualResult.Summary + "\n");
                         break;
 
                     default:
