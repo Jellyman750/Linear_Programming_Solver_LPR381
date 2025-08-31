@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using Linear_Programming_Solver.Models;
 
 namespace Linear_Programming_Solver.Analysis
@@ -17,23 +18,49 @@ namespace Linear_Programming_Solver.Analysis
         {
             this.problem = problem ?? throw new ArgumentNullException(nameof(problem));
             this.result = result ?? throw new ArgumentNullException(nameof(result));
+
+            // Validate inputs
+            if (result.Tableau == null)
+                throw new ArgumentException("SimplexResult.Tableau cannot be null.");
+            if (result.Basis == null)
+                throw new ArgumentException("SimplexResult.Basis cannot be null.");
+            if (result.VarNames == null)
+                throw new ArgumentException("SimplexResult.VarNames cannot be null.");
+
             this.tableau = result.Tableau;
             this.basis = result.Basis;
             this.varNames = result.VarNames;
+
+            // Validate tableau dimensions
+            int m = problem.Constraints.Count;
+            int n = problem.NumVars + m + 1; // Vars + slacks + RHS
+            if (tableau.GetLength(0) != m + 1 || tableau.GetLength(1) != n)
+                throw new ArgumentException($"Tableau dimensions invalid. Expected {m + 1} rows, {n} columns, got {tableau.GetLength(0)} rows, {tableau.GetLength(1)} columns.");
+            if (basis.Length != m)
+                throw new ArgumentException($"Basis length invalid. Expected {m}, got {basis.Length}.");
+            if (varNames.Length < problem.NumVars + m)
+                throw new ArgumentException($"VarNames length invalid. Expected at least {problem.NumVars + m}, got {varNames.Length}.");
         }
 
         // ===================== PUBLIC METHODS =====================
         public string GetRangeReport(string target)
         {
+            if (string.IsNullOrWhiteSpace(target))
+                throw new ArgumentException("Target cannot be empty.");
+
             if (target.StartsWith("Constraint"))
             {
-                int index = int.Parse(target.Split(' ')[1]) - 1;
+                if (!int.TryParse(target.Split(' ')[1], out int index) || index < 1 || index > problem.Constraints.Count)
+                    throw new ArgumentException($"Invalid constraint index in '{target}'. Expected 1 to {problem.Constraints.Count}.");
+                index--; // 1-based to 0-based
                 var range = GetConstraintRange(index);
                 return $"{target}: {range.min:F3} ≤ B ≤ {range.max:F3}";
             }
             else
             {
                 int col = Array.IndexOf(varNames, target);
+                if (col < 0)
+                    throw new ArgumentException($"Variable '{target}' not found in VarNames.");
                 if (basis.Contains(col))
                 {
                     var range = GetBasicVariableObjectiveRange(Array.IndexOf(basis, col));
@@ -49,39 +76,60 @@ namespace Linear_Programming_Solver.Analysis
 
         public string ApplyChange(string target, double value)
         {
+            if (string.IsNullOrWhiteSpace(target))
+                throw new ArgumentException("Target cannot be empty.");
+
             if (target.StartsWith("Constraint"))
             {
-                int index = int.Parse(target.Split(' ')[1]) - 1;
+                if (!int.TryParse(target.Split(' ')[1], out int index) || index < 1 || index > problem.Constraints.Count)
+                    throw new ArgumentException($"Invalid constraint index in '{target}'. Expected 1 to {problem.Constraints.Count}.");
+                index--;
                 problem.Constraints[index].B = value;
-                return $"Constraint {index + 1} B-value updated to {value}";
+                return $"Constraint {index + 1} B-value updated to {value:F3}";
             }
             else
             {
                 int col = Array.IndexOf(varNames, target);
+                if (col < 0)
+                    throw new ArgumentException($"Variable '{target}' not found in VarNames.");
                 if (basis.Contains(col))
-                    return $"Basic variable {target} change not implemented for objective coefficients.";
+                {
+                    problem.C[col] = value;
+                    return $"Basic variable {target} objective coefficient updated to {value:F3}";
+                }
                 else
-                    return $"Non-basic variable {target} change not implemented for objective coefficients.";
+                {
+                    problem.C[col] = value;
+                    return $"Non-basic variable {target} objective coefficient updated to {value:F3}";
+                }
             }
         }
 
         public string GetShadowPricesReport()
         {
             int m = tableau.GetLength(0) - 1;
-            string report = "Shadow Prices:\n";
-            for (int i = 0; i < basis.Length; i++)
+            var sb = new StringBuilder("Shadow Prices:\n");
+            for (int i = 0; i < problem.Constraints.Count; i++)
             {
-                string bVar = varNames[basis[i]];
-                double shadow = tableau[m, basis[i]];
-                report += $"  {bVar}: {shadow:F3}\n";
+                int row = i + 1; // Objective row is 0
+                double shadowPrice = 0;
+                for (int j = problem.NumVars; j < tableau.GetLength(1) - 1; j++) // Slack variables
+                {
+                    if (Math.Abs(tableau[row, j] - 1.0) < 1e-9 && basis.Contains(j))
+                    {
+                        shadowPrice = -tableau[0, j]; // Reduced cost of slack variable
+                        break;
+                    }
+                }
+                sb.AppendLine($"  Constraint {i + 1}: {shadowPrice:F3}");
             }
-            return report;
+            return sb.ToString();
         }
 
         public SimplexResult SolveDualLP()
         {
             int m = problem.Constraints.Count;
-            int n = problem.C.Length;
+            int n = problem.NumVars;
 
             // Dual objective coefficients = original RHS values (B)
             double[] dualC = new double[m];
@@ -94,16 +142,14 @@ namespace Linear_Programming_Solver.Analysis
                 double[] row = new double[m];
                 for (int i = 0; i < m; i++)
                     row[i] = problem.Constraints[i].A[j];
-
                 dualConstraints.Add(new Constraint
                 {
                     A = row,
                     B = problem.C[j],
-                    Relation = Rel.LE// assume primal is maximize; adjust if needed
+                    Relation = Rel.GE // Primal is maximize, dual is minimize
                 });
             }
 
-            // Construct dual LP using constructor or object initializer
             LPProblem dualProblem = new LPProblem
             {
                 C = dualC,
@@ -111,14 +157,13 @@ namespace Linear_Programming_Solver.Analysis
             };
 
             var solver = new LPSolver();
-            return solver.Solve(dualProblem, "Primal Simplex", (text, highlight) => { });
+            return solver.Solve(dualProblem, "Dual Simplex", (text, highlight) => { });
         }
 
         // ===================== PRIVATE METHODS =====================
         private IEnumerable<string> GetNonBasicVariables()
         {
-            int n = problem.NumVars;
-            for (int j = 0; j < n; j++)
+            for (int j = 0; j < problem.NumVars; j++)
                 if (!basis.Contains(j))
                     yield return varNames[j];
         }
@@ -126,23 +171,20 @@ namespace Linear_Programming_Solver.Analysis
         private (double min, double max) GetNonBasicVariableRange(string varName)
         {
             int col = Array.IndexOf(varNames, varName);
+            if (col < 0)
+                throw new ArgumentException($"Variable '{varName}' not found in VarNames.");
+
             int m = tableau.GetLength(0) - 1;
-            double current = tableau[m, col];
+            double current = problem.C[col]; // Current objective coefficient
+            double reducedCost = tableau[0, col]; // Reduced cost in objective row
 
             double min = double.NegativeInfinity;
             double max = double.PositiveInfinity;
 
-            for (int i = 0; i < m; i++)
-            {
-                double coeff = tableau[i, col];
-                double rhs = tableau[i, tableau.GetLength(1) - 1];
-
-                if (Math.Abs(coeff) < 1e-9) continue;
-
-                double val = current / coeff;
-                if (coeff > 0) max = Math.Min(max, current + val);
-                else min = Math.Max(min, current + val);
-            }
+            if (reducedCost > 0)
+                max = current + reducedCost; // Increase until reduced cost = 0
+            else if (reducedCost < 0)
+                min = current + reducedCost; // Decrease until reduced cost = 0
 
             return (min, max);
         }
@@ -153,21 +195,22 @@ namespace Linear_Programming_Solver.Analysis
             int m = tableau.GetLength(0) - 1;
             int n = tableau.GetLength(1) - 1;
 
+            double current = problem.C[col];
             double min = double.NegativeInfinity;
             double max = double.PositiveInfinity;
 
             for (int j = 0; j < n; j++)
             {
                 if (basis.Contains(j)) continue;
-                double cj = problem.C[j];
-                double aij = tableau[basicVarRow, j];
-                double reduced = tableau[m, j];
-
+                double aij = tableau[basicVarRow + 1, j]; // +1 because row 0 is objective
                 if (Math.Abs(aij) < 1e-9) continue;
 
-                double val = reduced / aij;
-                if (aij > 0) max = Math.Min(max, cj + val);
-                else min = Math.Max(min, cj + val);
+                double reducedCost = tableau[0, j];
+                double delta = -reducedCost / aij;
+                if (aij > 0)
+                    max = Math.Min(max, current + delta);
+                else
+                    min = Math.Max(min, current + delta);
             }
 
             return (min, max);
@@ -175,25 +218,24 @@ namespace Linear_Programming_Solver.Analysis
 
         private (double min, double max) GetConstraintRange(int index)
         {
-            int m = tableau.GetLength(0) - 1;
+            int row = index + 1; // Objective row is 0
             int n = tableau.GetLength(1) - 1;
-
-            double[] bCol = new double[basis.Length];
-            for (int i = 0; i < basis.Length; i++) bCol[i] = tableau[i, n];
+            double currentB = tableau[row, n]; // Current RHS
 
             double min = double.NegativeInfinity;
             double max = double.PositiveInfinity;
 
-            int row = index;
-
-            for (int j = 0; j < basis.Length; j++)
+            for (int j = 0; j < problem.NumVars; j++)
             {
-                double aij = tableau[row, basis[j]];
+                if (basis.Contains(j)) continue;
+                double aij = tableau[row, j];
                 if (Math.Abs(aij) < 1e-9) continue;
 
-                double val = bCol[j] / aij;
-                if (aij > 0) max = Math.Min(max, val);
-                else min = Math.Max(min, val);
+                double delta = -tableau[row, n] / aij;
+                if (aij > 0)
+                    max = Math.Min(max, currentB + delta);
+                else
+                    min = Math.Max(min, currentB + delta);
             }
 
             return (min, max);
