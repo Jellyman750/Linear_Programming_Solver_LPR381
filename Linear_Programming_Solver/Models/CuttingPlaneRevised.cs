@@ -111,4 +111,3 @@ namespace Linear_Programming_Solver.Models
         }
     }
 }
-

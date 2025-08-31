@@ -228,8 +228,6 @@ namespace Linear_Programming_Solver
             }
         }
 
-
-
         private void btnSolve_Click(object sender, EventArgs e)
         {
             iterationOutputTextBox.Clear();
@@ -237,20 +235,51 @@ namespace Linear_Programming_Solver
 
             string selectedAlgorithm = algorithmDropdown.SelectedItem?.ToString() ?? "";
 
-            if (selectedAlgorithm.Contains("Simplex") || selectedAlgorithm.Contains("Cutting Plane"))
+            switch (selectedAlgorithm)
             {
-                var solver = new LPSolver();
-                currentResult = solver.Solve(currentProblem, selectedAlgorithm, (text, highlight) => AppendPivotRow(text, highlight));
-            }
-            else
-            {
-                var bbSolver = new BranchAndBound();
-                currentResult = bbSolver.Solve(currentProblem, (text, highlight) => AppendPivotRow(text, highlight));
+                case "Primal Simplex":
+                case "Revised Primal Simplex":
+                case "Dual Simplex":
+                    {
+                        var solver = new LPSolver();
+                        currentResult = solver.Solve(currentProblem, selectedAlgorithm, (text, highlight) => AppendPivotRow(text, highlight));
+                        break;
+                    }
+
+                case "Cutting Plane":
+                    {
+                        var cpSolver = new CuttingPlane();
+                        currentResult = cpSolver.Solve(currentProblem, (text, highlight) => AppendPivotRow(text, highlight));
+                        break;
+                    }
+
+                case "Revised Cutting Plane":
+                    {
+                        var cpRevisedSolver = new CuttingPlaneRevised();
+                        currentResult = cpRevisedSolver.Solve(currentProblem, (text, highlight) => AppendPivotRow(text, highlight));
+                        break;
+                    }
+
+                case "Branch and Bound":
+                case "Revised Branch and Bound":
+                case "Branch and Bound Knapsack":
+                    {
+                        var bbSolver = new BranchAndBound();
+                        currentResult = bbSolver.Solve(currentProblem, (text, highlight) => AppendPivotRow(text, highlight));
+                        break;
+                    }
+
+                default:
+                    MessageBox.Show("Please select a valid algorithm.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
             }
 
             iterationOutputTextBox.AppendText("\n\nFinal Report:\n" + currentResult.Report);
             iterationOutputTextBox.AppendText("\n\nSummary:\n" + currentResult.Summary);
         }
+
+
+
 
         private void BtnUpload_Click(object sender, EventArgs e)
         {
