@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
 
 namespace Linear_Programming_Solver.Models
 {
@@ -38,9 +37,17 @@ namespace Linear_Programming_Solver.Models
 
     public class SimplexResult
     {
-        public string Report { get; set; } = string.Empty;
-        public string Summary { get; set; } = string.Empty;
+        public string Report { get; set; }
+        public string Summary { get; set; }
+        public double OptimalValue { get; set; }
+        public double[] Solution { get; set; }
+        public double[,] Tableau { get; set; }
+
+        // Add these
+        public int[] Basis { get; set; }
+        public string[] VarNames { get; set; }
     }
+
 
     internal class PrimalSimplex : ILPAlgorithm
     {
@@ -119,7 +126,7 @@ namespace Linear_Programming_Solver.Models
             return FinalizeReport(report, tableau, basis, varNames, "OPTIMAL");
         }
 
-        // ---------- Helper methods (unchanged) ----------
+        // ---------- Helper methods ----------
         private static SimplexResult FinalizeReport(StringBuilder sb, double[,] T, int[] basis, string[] varNames, string status)
         {
             int m = T.GetLength(0) - 1;
@@ -138,7 +145,17 @@ namespace Linear_Programming_Solver.Models
             summary.AppendLine($"z* = {Math.Round(z, 3):0.###}");
             summary.AppendLine("x* = [" + string.Join(", ", x.Select(v => Math.Round(v, 3))) + "]");
 
-            return new SimplexResult { Report = sb.ToString(), Summary = summary.ToString() };
+            return new SimplexResult
+            {
+                Report = sb.ToString(),
+                Summary = summary.ToString(),
+                OptimalValue = z,
+                Solution = x,
+                Tableau = T,
+                Basis = basis,
+                VarNames = varNames
+            };
+
         }
 
         private static LPProblem ExpandEqualitiesToInequalities(LPProblem model)
@@ -286,4 +303,6 @@ namespace Linear_Programming_Solver.Models
             }
         }
     }
+
 }
+
